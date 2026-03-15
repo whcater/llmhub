@@ -175,6 +175,53 @@ header .logout:hover { color: ${COLORS.primary}; }
 	body { padding: 0.75rem; }
 	.pw-form input { width: 140px; }
 }
+
+/* Inline edit */
+.ep-row .edit-input {
+	font-family: 'SF Mono','Fira Code',monospace; font-size: 0.78rem;
+	padding: 0.3rem 0.5rem; border-radius: 4px; border: 1px solid ${COLORS.primary};
+	background: ${COLORS.input}; color: ${COLORS.text}; outline: none;
+}
+.ep-row .edit-url { flex: 1; min-width: 100px; }
+.ep-row .edit-key { width: 160px; }
+
+/* Quick Commands */
+.cmd-section { background: ${COLORS.card}; border-radius: 12px; padding: 1.25rem 1.5rem; margin-bottom: 1rem; }
+.cmd-section h2 { font-size: 1rem; margin-bottom: 0.75rem; color: ${COLORS.textDim}; font-weight: 500; }
+.cmd-group { margin-bottom: 1rem; }
+.cmd-group:last-child { margin-bottom: 0; }
+.cmd-group h3 { font-size: 0.9rem; font-weight: 600; margin-bottom: 0.5rem; text-transform: capitalize; }
+.cmd-block { position: relative; margin-bottom: 0.5rem; }
+.cmd-label { font-size: 0.75rem; color: ${COLORS.textDim}; margin-bottom: 0.2rem; }
+.cmd-text {
+	font-family: 'SF Mono','Fira Code',monospace; font-size: 0.75rem; background: ${COLORS.input};
+	padding: 0.5rem 4.5rem 0.5rem 0.75rem; border-radius: 6px; border: 1px solid ${COLORS.border};
+	color: ${COLORS.textDim}; word-break: break-all; white-space: pre-wrap; line-height: 1.5;
+}
+.cmd-copy {
+	position: absolute; bottom: 0.4rem; right: 0.4rem;
+	padding: 0.25rem 0.6rem; border-radius: 4px; font-size: 0.7rem; font-weight: 500;
+	background: ${COLORS.accent}; color: ${COLORS.textDim}; border: 1px solid ${COLORS.border};
+	cursor: pointer; transition: all 0.2s;
+}
+.cmd-copy:hover { color: ${COLORS.text}; border-color: ${COLORS.textDim}; }
+
+/* Cmd popup in endpoint rows */
+.cmd-popup-wrap { position: relative; display: inline-block; }
+.cmd-popup {
+	display: none; position: absolute; right: 0; top: 100%; margin-top: 4px;
+	background: ${COLORS.card}; border: 1px solid ${COLORS.border}; border-radius: 6px;
+	padding: 0.35rem; z-index: 10; min-width: 120px;
+	box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+}
+.cmd-popup.show { display: block; }
+.cmd-popup-item {
+	display: block; width: 100%; text-align: left; padding: 0.35rem 0.5rem;
+	border-radius: 4px; font-size: 0.75rem; color: ${COLORS.textDim};
+	background: transparent; border: none; cursor: pointer; white-space: nowrap;
+	font-family: inherit;
+}
+.cmd-popup-item:hover { background: ${COLORS.accent}; color: ${COLORS.text}; }
 </style>
 </head>
 <body>
@@ -213,6 +260,9 @@ header .logout:hover { color: ${COLORS.primary}; }
 
 	<!-- Provider Cards -->
 	<div id="providers"></div>
+
+	<!-- Quick Commands -->
+	<div id="quickCmds"></div>
 </div>
 
 <script>
@@ -234,6 +284,10 @@ function mask(s, show = 6) {
 	return s.slice(0, show) + '\u2022'.repeat(Math.min(s.length - show, 20));
 }
 
+document.addEventListener('click', () => {
+	document.querySelectorAll('.cmd-popup.show').forEach(p => p.classList.remove('show'));
+});
+
 // ── Session check ───────────────────────────
 (async () => {
 	const r = await api('/session');
@@ -244,6 +298,7 @@ function mask(s, show = 6) {
 async function init() {
 	await loadToken();
 	await loadProviders();
+	renderQuickCommands();
 }
 
 // ── Token ───────────────────────────────────
@@ -273,6 +328,7 @@ genBtn.addEventListener('click', async () => {
 	const r = await api('/token', { method: 'POST' });
 	if (r) { const d = await r.json(); tokenVal.textContent = d.token; }
 	genBtn.disabled = false;
+	renderQuickCommands();
 });
 
 // ── Password ────────────────────────────────
@@ -364,6 +420,8 @@ function renderEndpoints(name, card, endpoints) {
 			+ '<span class="test-indicator" data-ti></span>'
 			+ '<div class="actions">'
 			+ '  <button class="btn-sm btn-success test-one">Test</button>'
+			+ '  <div class="cmd-popup-wrap"><button class="btn-sm btn-outline cmd-row-btn">Cmd</button><div class="cmd-popup"><button class="cmd-popup-item" data-platform="mac">Mac / Linux</button><button class="cmd-popup-item" data-platform="win">Windows</button></div></div>'
+			+ '  <button class="btn-sm btn-outline edit-btn">Edit</button>'
 			+ '  <button class="btn-sm btn-danger del-btn">&times;</button>'
 			+ '</div>';
 
@@ -377,6 +435,61 @@ function renderEndpoints(name, card, endpoints) {
 			saveProvider(name);
 		});
 		row.querySelector('.test-one').addEventListener('click', () => testOne(name, ep, row.querySelector('[data-ti]')));
+
+		const cmdRowBtn = row.querySelector('.cmd-row-btn');
+		const cmdPopup = row.querySelector('.cmd-popup');
+		cmdRowBtn.addEventListener('click', (e) => {
+			e.stopPropagation();
+			document.querySelectorAll('.cmd-popup.show').forEach(p => p.classList.remove('show'));
+			cmdPopup.classList.toggle('show');
+		});
+		row.querySelectorAll('.cmd-popup-item').forEach(item => {
+			item.addEventListener('click', () => {
+				const cmd = item.dataset.platform === 'mac'
+					? 'export ANTHROPIC_AUTH_TOKEN=' + ep.apiKey + ' && export ANTHROPIC_BASE_URL=' + ep.baseUrl + ' && claude --dangerously-skip-permissions'
+					: 'set ANTHROPIC_AUTH_TOKEN=' + ep.apiKey + ' & set ANTHROPIC_BASE_URL=' + ep.baseUrl + ' & claude --dangerously-skip-permissions';
+				navigator.clipboard.writeText(cmd).then(() => {
+					cmdRowBtn.textContent = 'Copied!';
+					cmdPopup.classList.remove('show');
+					setTimeout(() => cmdRowBtn.textContent = 'Cmd', 1500);
+				});
+			});
+		});
+
+		row.querySelector('.edit-btn').addEventListener('click', () => {
+			const urlSpan = row.querySelector('.url');
+			const keySpan = row.querySelector('.key');
+			const actionsDiv = row.querySelector('.actions');
+
+			const urlInput = document.createElement('input');
+			urlInput.type = 'text';
+			urlInput.className = 'edit-input edit-url';
+			urlInput.value = ep.baseUrl;
+			urlSpan.replaceWith(urlInput);
+
+			const keyInput = document.createElement('input');
+			keyInput.type = 'text';
+			keyInput.className = 'edit-input edit-key';
+			keyInput.value = ep.apiKey;
+			keySpan.replaceWith(keyInput);
+
+			actionsDiv.innerHTML =
+				'<button class="btn-sm btn-primary save-btn">Save</button>'
+				+ '<button class="btn-sm btn-outline cancel-btn">Cancel</button>';
+
+			actionsDiv.querySelector('.save-btn').addEventListener('click', () => {
+				const newUrl = urlInput.value.trim();
+				const newKey = keyInput.value.trim();
+				if (!newUrl || !newKey) return;
+				providerData[name][i].baseUrl = newUrl;
+				providerData[name][i].apiKey = newKey;
+				saveProvider(name);
+			});
+
+			actionsDiv.querySelector('.cancel-btn').addEventListener('click', () => {
+				renderEndpoints(name, card, providerData[name] || []);
+			});
+		});
 
 		list.appendChild(row);
 	});
@@ -427,6 +540,38 @@ async function batchTest(name, card) {
 	await Promise.all(promises);
 	batchResult.textContent = ok + '/' + eps.length + ' passed';
 	batchResult.className = 'test-indicator ' + (fail === 0 ? 'ok' : 'fail');
+}
+
+// ── Quick Commands ──────────────────────────
+function renderQuickCommands() {
+	const container = document.getElementById('quickCmds');
+	const token = tokenVal.textContent;
+	if (!token || token === '(not set)' || token === 'Loading...') { container.innerHTML = ''; return; }
+	const origin = location.origin;
+	const providers = ['anthropic', 'openai', 'gemini', 'grok'];
+
+	let html = '<div class="cmd-section"><h2>Quick Run Commands</h2>';
+	providers.forEach(name => {
+		const base = origin + '/' + name;
+		const macCmd = 'export ANTHROPIC_AUTH_TOKEN=' + token + ' && export ANTHROPIC_BASE_URL=' + base + ' && claude --dangerously-skip-permissions';
+		const winCmd = 'set ANTHROPIC_AUTH_TOKEN=' + token + ' & set ANTHROPIC_BASE_URL=' + base + ' & claude --dangerously-skip-permissions';
+		html += '<div class="cmd-group"><h3>' + esc(name) + '</h3>'
+			+ '<div class="cmd-block"><div class="cmd-label">Mac / Linux</div><div class="cmd-text">' + esc(macCmd) + '</div><button class="cmd-copy">Copy</button></div>'
+			+ '<div class="cmd-block"><div class="cmd-label">Windows</div><div class="cmd-text">' + esc(winCmd) + '</div><button class="cmd-copy">Copy</button></div>'
+			+ '</div>';
+	});
+	html += '</div>';
+	container.innerHTML = html;
+
+	container.querySelectorAll('.cmd-copy').forEach(btn => {
+		btn.addEventListener('click', () => {
+			const text = btn.previousElementSibling.textContent;
+			navigator.clipboard.writeText(text).then(() => {
+				btn.textContent = 'Copied!';
+				setTimeout(() => btn.textContent = 'Copy', 1500);
+			});
+		});
+	});
 }
 
 // ── Logout ──────────────────────────────────
