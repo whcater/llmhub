@@ -115,6 +115,7 @@ async function handleProxy(
 
 	try {
 		const upstream = await fetch(url, init);
+ 
 		// Stream the response back as-is
 		return new Response(upstream.body, {
 			status: upstream.status,
