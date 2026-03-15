@@ -158,11 +158,15 @@ async function runTest(provider: string, baseUrl: string, apiKey: string): Promi
 				resp = await fetch(`${base}/v1/messages?beta=true`, {
 					method: "POST",
 					headers: {
+						"accept": "application/json",
+						"accept-encoding": "gzip, deflate",
+						"accept-language": "*",
 						"anthropic-beta": "claude-code-20250219,adaptive-thinking-2026-01-28,prompt-caching-scope-2026-01-05,effort-2025-11-24",
 						"anthropic-dangerous-direct-browser-access": "true",
 						"anthropic-version": "2023-06-01",
 						"authorization": `Bearer ${apiKey}`,
 						"content-type": "application/json",
+						"sec-fetch-mode": "cors",
 						"user-agent": "claude-cli/2.1.71 (external, cli)",
 						"x-app": "cli",
 						"x-stainless-arch": "x64",
@@ -179,8 +183,8 @@ async function runTest(provider: string, baseUrl: string, apiKey: string): Promi
 						messages: [{ role: "user", content: [{ type: "text", text: "say hi", cache_control: { type: "ephemeral" } }] }],
 						system: [
 							{ type: "text", text: "x-anthropic-billing-header: cc_version=2.1.71.752; cc_entrypoint=cli; cch=00000;" },
-							{ type: "text", text: "You are Claude Code, Anthropic official CLI for Claude.", cache_control: { type: "ephemeral" } },
-							{ type: "text", text: "\nYou are an interactive agent that helps users with software engineering tasks.", cache_control: { type: "ephemeral" } },
+							{ type: "text", text: "You are Claude Code, Anthropic's official CLI for Claude.", cache_control: { type: "ephemeral" } },
+							{ type: "text", text: "\nYou are an interactive agent that helps users with software engineering tasks. ", cache_control: { type: "ephemeral" } },
 						],
 						metadata: { user_id: "user_ba68116b494712900a4328b3bdb88d53e61182beeb3fb871336b8032c671225f_account__session_cd3ffd7d-0123-4908-b0c5-6b63e74e6bb9" },
 						max_tokens: 32000,
