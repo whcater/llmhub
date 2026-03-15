@@ -1,0 +1,12 @@
+node_modules/
+llm_specs/
+.wrangler/
+temp/
+
+*.http
+.env
+dist/
+logs/
+.idea/*
+package-lock.json
+wrangler.toml

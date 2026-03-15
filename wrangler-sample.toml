@@ -1,0 +1,8 @@
+name = "llmhub"
+main = "src/index.ts"
+compatibility_date = "2024-12-01"
+
+[[kv_namespaces]]
+binding = "LLMHUB_KV"
+id = "ab5ad75e293f4374a9d96137d6b23b37"
+preview_id = "c6b976b99adc4ea3ad4d82d767596bb0"
