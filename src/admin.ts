@@ -341,6 +341,56 @@ async function changePassword(request: Request, env: Env): Promise<Response> {
 	return json({ ok: true });
 }
 
+// ── Log viewing ──────────────────────────────────────────────────────
+
+async function listLogFolders(request: Request, env: Env): Promise<Response> {
+	if (request.method !== "GET") return json({ error: "Method not allowed" }, 405);
+
+	const list = await env.LLMHUB_KV.list({ prefix: "logs/" });
+	const folders = new Set<string>();
+	
+	for (const key of list.keys) {
+		const match = key.name.match(/^logs\/([^/]+)\//);
+		if (match) folders.add(match[1]);
+	}
+
+	return json({ folders: Array.from(folders).sort().reverse() });
+}
+
+async function listLogFiles(request: Request, env: Env, folder: string): Promise<Response> {
+	if (request.method !== "GET") return json({ error: "Method not allowed" }, 405);
+
+	const prefix = `logs/${folder}/`;
+	const list = await env.LLMHUB_KV.list({ prefix });
+	
+	const files = list.keys.map(k => ({
+		name: k.name.replace(prefix, ""),
+		key: k.name,
+	})).sort((a, b) => b.name.localeCompare(a.name));
+
+	return json({ folder, files });
+}
+
+async function getLogContent(request: Request, env: Env): Promise<Response> {
+	if (request.method !== "GET") return json({ error: "Method not allowed" }, 405);
+
+	const url = new URL(request.url);
+	const key = url.searchParams.get("key");
+	if (!key || !key.startsWith("logs/")) {
+		return json({ error: "Invalid log key" }, 400);
+	}
+
+	const content = await env.LLMHUB_KV.get(key);
+	if (!content) return json({ error: "Log not found" }, 404);
+
+	try {
+		const parsed = JSON.parse(content);
+		return json({ key, content: parsed, raw: content });
+	} catch {
+		return json({ key, content: null, raw: content });
+	}
+}
+
 // ── Router ───────────────────────────────────────────────────────────
 
 export async function handleAdmin(request: Request, env: Env, path: string): Promise<Response> {
@@ -359,10 +409,16 @@ export async function handleAdmin(request: Request, env: Env, path: string): Pro
 		if (path === "/admin/api/test") return testEndpoint(request, env);
 		if (path === "/admin/api/test-batch") return testBatch(request, env);
 		if (path === "/admin/api/change-password") return changePassword(request, env);
+		if (path === "/admin/api/logs") return listLogFolders(request, env);
+		if (path === "/admin/api/log-content") return getLogContent(request, env);
 
 		// Match /admin/api/providers/:name
 		const providerMatch = path.match(/^\/admin\/api\/providers\/([^/]+)$/);
 		if (providerMatch) return updateProvider(request, env, providerMatch[1]);
+
+		// Match /admin/api/logs/:folder
+		const logFolderMatch = path.match(/^\/admin\/api\/logs\/([^/]+)$/);
+		if (logFolderMatch) return listLogFiles(request, env, logFolderMatch[1]);
 
 		return json({ error: "Not found" }, 404);
 	}

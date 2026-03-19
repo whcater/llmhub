@@ -95,14 +95,29 @@ export function adminPage(): string {
 <style>
 ${baseStyle}
 body { padding: 1.5rem; }
-.container { max-width: 960px; margin: 0 auto; }
+.container { max-width: 960px; margin: 0 auto; margin-left: 220px; }
 header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem; }
 header h1 { font-size: 1.4rem; }
 header .logout { color: ${COLORS.textDim}; font-size: 0.8rem; cursor: pointer; transition: color 0.2s; }
 header .logout:hover { color: ${COLORS.primary}; }
 
+/* Sidebar Navigation */
+.sidebar {
+	position: fixed; left: 1.5rem; top: 1.5rem; width: 180px; background: ${COLORS.card};
+	border-radius: 12px; padding: 1rem; z-index: 100; max-height: calc(100vh - 3rem);
+	overflow-y: auto; border: 1px solid ${COLORS.border};
+}
+.sidebar h3 { font-size: 0.85rem; color: ${COLORS.textDim}; margin-bottom: 0.5rem; font-weight: 600; }
+.sidebar nav { display: flex; flex-direction: column; gap: 0.25rem; }
+.sidebar a {
+	display: block; padding: 0.4rem 0.6rem; border-radius: 6px; font-size: 0.8rem;
+	color: ${COLORS.textDim}; text-decoration: none; transition: all 0.2s;
+}
+.sidebar a:hover { background: ${COLORS.accent}; color: ${COLORS.text}; }
+.sidebar a.active { background: ${COLORS.primary}; color: #fff; }
+
 /* Sections */
-.section { background: ${COLORS.card}; border-radius: 12px; padding: 1.25rem 1.5rem; margin-bottom: 1rem; }
+.section { background: ${COLORS.card}; border-radius: 12px; padding: 1.25rem 1.5rem; margin-bottom: 1rem; scroll-margin-top: 1rem; }
 .section h2 { font-size: 1rem; margin-bottom: 0.75rem; color: ${COLORS.textDim}; font-weight: 500; }
 
 /* Token row */
@@ -140,7 +155,7 @@ header .logout:hover { color: ${COLORS.primary}; }
 .msg.fail { color: ${COLORS.error}; }
 
 /* Provider cards */
-.provider-card { background: ${COLORS.card}; border-radius: 12px; padding: 1.25rem 1.5rem; margin-bottom: 1rem; }
+.provider-card { background: ${COLORS.card}; border-radius: 12px; padding: 1.25rem 1.5rem; margin-bottom: 1rem; scroll-margin-top: 1rem; }
 .provider-card h2 { font-size: 1rem; font-weight: 600; margin-bottom: 0.75rem; text-transform: capitalize; }
 .add-form { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: end; margin-bottom: 0.75rem; }
 .add-form .field { display: flex; flex-direction: column; gap: 0.25rem; flex: 1; min-width: 140px; }
@@ -171,6 +186,10 @@ header .logout:hover { color: ${COLORS.primary}; }
 .no-ep { color: ${COLORS.textDim}; font-size: 0.8rem; font-style: italic; padding: 0.5rem 0; }
 
 /* Responsive */
+@media (max-width: 900px) {
+	.sidebar { display: none; }
+	.container { margin-left: auto; }
+}
 @media (max-width: 600px) {
 	body { padding: 0.75rem; }
 	.pw-form input { width: 140px; }
@@ -185,8 +204,73 @@ header .logout:hover { color: ${COLORS.primary}; }
 .ep-row .edit-url { flex: 1; min-width: 100px; }
 .ep-row .edit-key { width: 160px; }
 
+/* Logs Section */
+.logs-section { background: ${COLORS.card}; border-radius: 12px; padding: 1.25rem 1.5rem; margin-bottom: 1rem; scroll-margin-top: 1rem; }
+.logs-section h2 { font-size: 1rem; margin-bottom: 0.75rem; color: ${COLORS.textDim}; font-weight: 500; }
+.logs-controls { display: flex; gap: 0.5rem; margin-bottom: 0.75rem; flex-wrap: wrap; align-items: center; }
+.logs-controls select {
+	padding: 0.45rem 0.65rem; border-radius: 6px; border: 1px solid ${COLORS.border};
+	background: ${COLORS.input}; color: ${COLORS.text}; outline: none; font-family: inherit; font-size: 0.875rem;
+	cursor: pointer;
+}
+.logs-controls select:focus { border-color: ${COLORS.primary}; }
+.logs-controls .auto-refresh {
+	display: flex; align-items: center; gap: 0.35rem; font-size: 0.8rem; color: ${COLORS.textDim};
+}
+.logs-controls input[type="checkbox"] { accent-color: ${COLORS.primary}; width: 16px; height: 16px; cursor: pointer; }
+.log-list { display: flex; flex-direction: column; gap: 0.3rem; max-height: 300px; overflow-y: auto; margin-bottom: 0.75rem; }
+.log-item {
+	padding: 0.4rem 0.65rem; border-radius: 6px; background: ${COLORS.input}; border: 1px solid ${COLORS.border};
+	font-family: 'SF Mono','Fira Code',monospace; font-size: 0.75rem; color: ${COLORS.textDim};
+	cursor: pointer; transition: all 0.2s;
+}
+.log-item:hover { border-color: ${COLORS.primary}; color: ${COLORS.text}; }
+.log-item.selected { border-color: ${COLORS.primary}; background: ${COLORS.accent}; color: ${COLORS.text}; }
+.log-item .req { color: ${COLORS.success}; }
+.log-item .res { color: ${COLORS.primary}; }
+.log-viewer {
+	background: ${COLORS.input}; border: 1px solid ${COLORS.border}; border-radius: 8px;
+	padding: 0.75rem; max-height: 500px; overflow: auto; position: relative;
+}
+.log-viewer pre {
+	margin: 0; font-family: 'SF Mono','Fira Code',monospace; font-size: 0.75rem;
+	color: ${COLORS.text}; white-space: pre-wrap; word-break: break-all; line-height: 1.5;
+}
+.log-viewer-header {
+	display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;
+	padding-bottom: 0.5rem; border-bottom: 1px solid ${COLORS.border};
+}
+.log-viewer-title { font-size: 0.8rem; color: ${COLORS.textDim}; font-family: 'SF Mono','Fira Code',monospace; }
+.log-viewer-actions { display: flex; gap: 0.35rem; }
+.log-empty { color: ${COLORS.textDim}; font-size: 0.8rem; font-style: italic; text-align: center; padding: 1rem; }
+.log-pair-view { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
+@media (max-width: 768px) {
+	.log-pair-view { grid-template-columns: 1fr; }
+}
+
+/* Fullscreen Log Viewer */
+.log-fullscreen {
+	display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 1000;
+	background: ${COLORS.bg}; overflow: auto; padding: 1.5rem;
+}
+.log-fullscreen.active { display: block; }
+.log-fullscreen .log-viewer {
+	max-height: none; height: calc(100vh - 5rem); background: ${COLORS.card};
+}
+.log-fullscreen .log-viewer-header {
+	position: sticky; top: 0; background: ${COLORS.card}; z-index: 10;
+	padding-top: 0.5rem; margin-top: -0.5rem;
+}
+.log-fullscreen .log-pair-view { height: calc(100% - 3rem); overflow: auto; }
+.log-fullscreen .log-pair-view > div { height: 100%; overflow: auto; }
+.fullscreen-hint {
+	position: absolute; top: 1rem; right: 1rem; font-size: 0.7rem; color: ${COLORS.textDim};
+	background: ${COLORS.accent}; padding: 0.25rem 0.5rem; border-radius: 4px;
+	border: 1px solid ${COLORS.border};
+}
+
 /* Quick Commands */
-.cmd-section { background: ${COLORS.card}; border-radius: 12px; padding: 1.25rem 1.5rem; margin-bottom: 1rem; }
+.cmd-section { background: ${COLORS.card}; border-radius: 12px; padding: 1.25rem 1.5rem; margin-bottom: 1rem; scroll-margin-top: 1rem; }
 .cmd-section h2 { font-size: 1rem; margin-bottom: 0.75rem; color: ${COLORS.textDim}; font-weight: 500; }
 .cmd-group { margin-bottom: 1rem; }
 .cmd-group:last-child { margin-bottom: 0; }
@@ -225,6 +309,21 @@ header .logout:hover { color: ${COLORS.primary}; }
 </style>
 </head>
 <body>
+<!-- Sidebar Navigation -->
+<div class="sidebar">
+	<h3>Navigation</h3>
+	<nav>
+		<a href="#token">Access Token</a>
+		<a href="#password">Password</a>
+		<a href="#anthropic">Anthropic</a>
+		<a href="#openai">OpenAI</a>
+		<a href="#gemini">Gemini</a>
+		<a href="#grok">Grok</a>
+		<a href="#logs">Logs</a>
+		<a href="#commands">Commands</a>
+	</nav>
+</div>
+
 <div class="container">
 	<header>
 		<h1>LLMHub Admin</h1>
@@ -232,7 +331,7 @@ header .logout:hover { color: ${COLORS.primary}; }
 	</header>
 
 	<!-- Token Section -->
-	<div class="section">
+	<div class="section" id="token">
 		<h2>Access Token</h2>
 		<div class="token-row">
 			<span class="token-val" id="tokenVal">Loading...</span>
@@ -242,7 +341,7 @@ header .logout:hover { color: ${COLORS.primary}; }
 	</div>
 
 	<!-- Password Section -->
-	<div class="section">
+	<div class="section" id="password">
 		<h2>Change Admin Password</h2>
 		<form class="pw-form" id="pwForm">
 			<div class="field">
@@ -261,8 +360,36 @@ header .logout:hover { color: ${COLORS.primary}; }
 	<!-- Provider Cards -->
 	<div id="providers"></div>
 
+	<!-- Logs Section -->
+	<div class="logs-section" id="logs">
+		<h2>Request/Response Logs</h2>
+		<div class="logs-controls">
+			<select id="logFolder">
+				<option value="">Select time period...</option>
+			</select>
+			<button class="btn-sm btn-primary" id="refreshLogs">Refresh</button>
+			<label class="auto-refresh">
+				<input type="checkbox" id="autoRefresh">
+				<span>Auto-refresh (5s)</span>
+			</label>
+			<button class="btn-sm btn-outline" id="browseAll">Browse All</button>
+		</div>
+		<div class="log-list" id="logList"></div>
+		<div class="log-viewer" id="logViewer">
+			<div class="log-empty">Select a log file to view</div>
+		</div>
+	</div>
+
 	<!-- Quick Commands -->
 	<div id="quickCmds"></div>
+</div>
+
+<!-- Fullscreen Log Viewer -->
+<div class="log-fullscreen" id="logFullscreen">
+	<div class="fullscreen-hint">Press ESC to exit fullscreen</div>
+	<div class="log-viewer" id="logViewerFullscreen">
+		<div class="log-empty">No log selected</div>
+	</div>
 </div>
 
 <script>
@@ -298,6 +425,7 @@ document.addEventListener('click', () => {
 async function init() {
 	await loadToken();
 	await loadProviders();
+	await loadLogFolders();
 	renderQuickCommands();
 }
 
@@ -374,6 +502,7 @@ function renderProviders() {
 function buildCard(name, endpoints) {
 	const card = document.createElement('div');
 	card.className = 'provider-card';
+	card.id = name;
 	card.innerHTML = '<h2>' + name + '</h2>'
 		+ '<div class="add-form">'
 		+ '  <div class="field"><label>Base URL</label><input type="url" placeholder="https://..." data-url></div>'
@@ -550,7 +679,7 @@ function renderQuickCommands() {
 	const origin = location.origin;
 	const providers = ['anthropic', 'openai', 'gemini', 'grok'];
 
-	let html = '<div class="cmd-section"><h2>Quick Run Commands</h2>';
+	let html = '<div class="cmd-section" id="commands"><h2>Quick Run Commands</h2>';
 	providers.forEach(name => {
 		const base = origin + '/' + name;
 		const macCmd = 'export ANTHROPIC_AUTH_TOKEN=' + token + ' && export ANTHROPIC_BASE_URL=' + base + ' && claude --dangerously-skip-permissions';
@@ -579,6 +708,417 @@ document.getElementById('logout').addEventListener('click', () => {
 	document.cookie = 'session=; Path=/; Max-Age=0';
 	location.href = '/admin/login';
 });
+
+// ── Sidebar Navigation ──────────────────────
+const sections = document.querySelectorAll('.section, .provider-card, .logs-section, .cmd-section');
+const navLinks = document.querySelectorAll('.sidebar a');
+
+// Smooth scroll
+navLinks.forEach(link => {
+	link.addEventListener('click', (e) => {
+		e.preventDefault();
+		const targetId = link.getAttribute('href').slice(1);
+		const target = document.getElementById(targetId);
+		if (target) {
+			target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+		}
+	});
+});
+
+// Update active nav on scroll
+let scrollTimeout;
+window.addEventListener('scroll', () => {
+	clearTimeout(scrollTimeout);
+	scrollTimeout = setTimeout(() => {
+		let current = '';
+		sections.forEach(section => {
+			const sectionTop = section.offsetTop;
+			const sectionHeight = section.clientHeight;
+			if (window.scrollY >= sectionTop - 100) {
+				current = section.getAttribute('id');
+			}
+		});
+		
+		navLinks.forEach(link => {
+			link.classList.remove('active');
+			if (link.getAttribute('href') === '#' + current) {
+				link.classList.add('active');
+			}
+		});
+	}, 100);
+});
+
+// ── Logs ────────────────────────────────────
+const logFolderSelect = document.getElementById('logFolder');
+const logList = document.getElementById('logList');
+const logViewer = document.getElementById('logViewer');
+const logFullscreen = document.getElementById('logFullscreen');
+const logViewerFullscreen = document.getElementById('logViewerFullscreen');
+const autoRefreshCheckbox = document.getElementById('autoRefresh');
+const browseAllBtn = document.getElementById('browseAll');
+let currentFiles = [];
+let selectedLogKey = null;
+let autoRefreshInterval = null;
+let currentLogIndex = 0;
+let allLogs = [];
+let isFullscreen = false;
+let currentLogData = null;
+
+async function loadLogFolders() {
+	const r = await api('/logs');
+	if (!r) return;
+	const d = await r.json();
+	logFolderSelect.innerHTML = '<option value="">Select time period...</option>';
+	d.folders.forEach(f => {
+		const opt = document.createElement('option');
+		opt.value = f;
+		opt.textContent = f;
+		logFolderSelect.appendChild(opt);
+	});
+}
+
+logFolderSelect.addEventListener('change', async () => {
+	const folder = logFolderSelect.value;
+	if (!folder) { logList.innerHTML = ''; logViewer.innerHTML = '<div class="log-empty">Select a time period</div>'; return; }
+	
+	const r = await api('/logs/' + folder);
+	if (!r) return;
+	const d = await r.json();
+	currentFiles = d.files;
+	renderLogList();
+	logViewer.innerHTML = '<div class="log-empty">Select a log file to view</div>';
+});
+
+document.getElementById('refreshLogs').addEventListener('click', async () => {
+	await loadLogFolders();
+	if (logFolderSelect.value) {
+		logFolderSelect.dispatchEvent(new Event('change'));
+	}
+});
+
+// Auto-refresh
+autoRefreshCheckbox.addEventListener('change', () => {
+	if (autoRefreshCheckbox.checked) {
+		autoRefreshInterval = setInterval(async () => {
+			if (logFolderSelect.value) {
+				const r = await api('/logs/' + logFolderSelect.value);
+				if (r) {
+					const d = await r.json();
+					currentFiles = d.files;
+					renderLogList();
+				}
+			}
+		}, 5000);
+	} else {
+		if (autoRefreshInterval) {
+			clearInterval(autoRefreshInterval);
+			autoRefreshInterval = null;
+		}
+	}
+});
+
+// Browse all logs
+browseAllBtn.addEventListener('click', async () => {
+	if (!logFolderSelect.value) {
+		alert('Please select a time period first');
+		return;
+	}
+	
+	// Prepare all logs
+	const pairs = new Map();
+	currentFiles.forEach(f => {
+		const match = f.name.match(/^(.+)_(req|res)$/);
+		if (match) {
+			const [, id, type] = match;
+			if (!pairs.has(id)) pairs.set(id, {});
+			pairs.get(id)[type] = f.key;
+		}
+	});
+	
+	allLogs = Array.from(pairs.entries()).sort((a, b) => b[0].localeCompare(a[0]));
+	if (allLogs.length === 0) {
+		alert('No logs to browse');
+		return;
+	}
+	
+	currentLogIndex = 0;
+	await showLogAtIndex(0);
+});
+
+async function showLogAtIndex(index) {
+	if (index < 0 || index >= allLogs.length) return;
+	
+	currentLogIndex = index;
+	const [id, files] = allLogs[index];
+	
+	// Highlight in list
+	document.querySelectorAll('.log-item').forEach((item, i) => {
+		item.classList.toggle('selected', i === index);
+	});
+	
+	logViewer.innerHTML = '<div class="log-empty">Loading...</div>';
+	
+	const results = {};
+	if (files.req) {
+		const r = await api('/log-content?key=' + encodeURIComponent(files.req));
+		if (r) results.req = await r.json();
+	}
+	if (files.res) {
+		const r = await api('/log-content?key=' + encodeURIComponent(files.res));
+		if (r) results.res = await r.json();
+	}
+	
+	renderLogPairWithNav(id, results, index);
+}
+
+function renderLogList() {
+	logList.innerHTML = '';
+	if (!currentFiles.length) {
+		logList.innerHTML = '<div class="log-empty">No logs in this period</div>';
+		return;
+	}
+
+	// Group by request ID
+	const pairs = new Map();
+	currentFiles.forEach(f => {
+		const match = f.name.match(/^(.+)_(req|res)$/);
+		if (match) {
+			const [, id, type] = match;
+			if (!pairs.has(id)) pairs.set(id, {});
+			pairs.get(id)[type] = f.key;
+		}
+	});
+
+	// Render pairs
+	Array.from(pairs.entries()).sort((a, b) => b[0].localeCompare(a[0])).forEach(([id, files], idx) => {
+		const item = document.createElement('div');
+		item.className = 'log-item';
+		const hasReq = files.req ? '<span class="req">REQ</span>' : '';
+		const hasRes = files.res ? '<span class="res">RES</span>' : '';
+		item.innerHTML = hasReq + (hasReq && hasRes ? ' + ' : '') + hasRes + ' ' + esc(id);
+		item.addEventListener('click', () => viewLogPair(id, files, idx));
+		logList.appendChild(item);
+	});
+}
+
+async function viewLogPair(id, files, idx) {
+	document.querySelectorAll('.log-item').forEach(i => i.classList.remove('selected'));
+	event.target.closest('.log-item').classList.add('selected');
+
+	logViewer.innerHTML = '<div class="log-empty">Loading...</div>';
+
+	const results = {};
+	if (files.req) {
+		const r = await api('/log-content?key=' + encodeURIComponent(files.req));
+		if (r) results.req = await r.json();
+	}
+	if (files.res) {
+		const r = await api('/log-content?key=' + encodeURIComponent(files.res));
+		if (r) results.res = await r.json();
+	}
+
+	renderLogPair(id, results);
+}
+
+function renderLogPair(id, results) {
+	currentLogData = { id, results }; // Store for fullscreen
+	
+	let html = '<div class="log-viewer-header">'
+		+ '<div class="log-viewer-title">' + esc(id) + '</div>'
+		+ '<div class="log-viewer-actions">'
+		+ '  <button class="btn-sm btn-outline fullscreen-btn">⛶ Fullscreen</button>'
+		+ '  <button class="btn-sm btn-outline copy-log">Copy All</button>'
+		+ '</div>'
+		+ '</div>';
+
+	if (results.req || results.res) {
+		html += '<div class="log-pair-view">';
+		
+		if (results.req) {
+			html += '<div><div style="color: #00d26a; font-size: 0.75rem; margin-bottom: 0.35rem; font-weight: 600;">REQUEST</div>'
+				+ '<pre>' + esc(results.req.content ? JSON.stringify(results.req.content, null, 2) : results.req.raw) + '</pre></div>';
+		}
+		
+		if (results.res) {
+			html += '<div><div style="color: #e94560; font-size: 0.75rem; margin-bottom: 0.35rem; font-weight: 600;">RESPONSE</div>'
+				+ '<pre>' + esc(results.res.content ? JSON.stringify(results.res.content, null, 2) : results.res.raw) + '</pre></div>';
+		}
+		
+		html += '</div>';
+	} else {
+		html += '<div class="log-empty">No data</div>';
+	}
+
+	logViewer.innerHTML = html;
+
+	logViewer.querySelector('.fullscreen-btn')?.addEventListener('click', () => openFullscreen());
+	
+	logViewer.querySelector('.copy-log')?.addEventListener('click', () => {
+		const text = JSON.stringify({ request: results.req?.content || results.req?.raw, response: results.res?.content || results.res?.raw }, null, 2);
+		navigator.clipboard.writeText(text).then(() => {
+			const btn = logViewer.querySelector('.copy-log');
+			btn.textContent = 'Copied!';
+			setTimeout(() => btn.textContent = 'Copy All', 1500);
+		});
+	});
+}
+
+function renderLogPairWithNav(id, results, index) {
+	currentLogData = { id, results, index }; // Store for fullscreen
+	
+	let html = '<div class="log-viewer-header">'
+		+ '<div class="log-viewer-title">' + esc(id) + ' (' + (index + 1) + '/' + allLogs.length + ')</div>'
+		+ '<div class="log-viewer-actions">'
+		+ '  <button class="btn-sm btn-outline" id="prevLog" ' + (index === 0 ? 'disabled' : '') + '>← Prev</button>'
+		+ '  <button class="btn-sm btn-outline" id="nextLog" ' + (index === allLogs.length - 1 ? 'disabled' : '') + '>Next →</button>'
+		+ '  <button class="btn-sm btn-outline fullscreen-btn">⛶ Fullscreen</button>'
+		+ '  <button class="btn-sm btn-outline copy-log">Copy All</button>'
+		+ '</div>'
+		+ '</div>';
+
+	if (results.req || results.res) {
+		html += '<div class="log-pair-view">';
+		
+		if (results.req) {
+			html += '<div><div style="color: #00d26a; font-size: 0.75rem; margin-bottom: 0.35rem; font-weight: 600;">REQUEST</div>'
+				+ '<pre>' + esc(results.req.content ? JSON.stringify(results.req.content, null, 2) : results.req.raw) + '</pre></div>';
+		}
+		
+		if (results.res) {
+			html += '<div><div style="color: #e94560; font-size: 0.75rem; margin-bottom: 0.35rem; font-weight: 600;">RESPONSE</div>'
+				+ '<pre>' + esc(results.res.content ? JSON.stringify(results.res.content, null, 2) : results.res.raw) + '</pre></div>';
+		}
+		
+		html += '</div>';
+	} else {
+		html += '<div class="log-empty">No data</div>';
+	}
+
+	logViewer.innerHTML = html;
+
+	// Navigation buttons
+	document.getElementById('prevLog')?.addEventListener('click', () => showLogAtIndex(currentLogIndex - 1));
+	document.getElementById('nextLog')?.addEventListener('click', () => showLogAtIndex(currentLogIndex + 1));
+	
+	logViewer.querySelector('.fullscreen-btn')?.addEventListener('click', () => openFullscreen());
+
+	logViewer.querySelector('.copy-log')?.addEventListener('click', () => {
+		const text = JSON.stringify({ request: results.req?.content || results.req?.raw, response: results.res?.content || results.res?.raw }, null, 2);
+		navigator.clipboard.writeText(text).then(() => {
+			const btn = logViewer.querySelector('.copy-log');
+			btn.textContent = 'Copied!';
+			setTimeout(() => btn.textContent = 'Copy All', 1500);
+		});
+	});
+}
+
+// Fullscreen functions
+function openFullscreen() {
+	if (!currentLogData) return;
+	
+	isFullscreen = true;
+	logFullscreen.classList.add('active');
+	document.body.style.overflow = 'hidden';
+	
+	renderFullscreenLog(currentLogData.id, currentLogData.results, currentLogData.index);
+}
+
+function closeFullscreen() {
+	isFullscreen = false;
+	logFullscreen.classList.remove('active');
+	document.body.style.overflow = '';
+}
+
+function renderFullscreenLog(id, results, index) {
+	const hasNav = typeof index === 'number';
+	
+	let html = '<div class="log-viewer-header">'
+		+ '<div class="log-viewer-title">' + esc(id) + (hasNav ? ' (' + (index + 1) + '/' + allLogs.length + ')' : '') + '</div>'
+		+ '<div class="log-viewer-actions">';
+	
+	if (hasNav) {
+		html += '<button class="btn-sm btn-outline" id="prevLogFs" ' + (index === 0 ? 'disabled' : '') + '>← Prev</button>'
+			+ '<button class="btn-sm btn-outline" id="nextLogFs" ' + (index === allLogs.length - 1 ? 'disabled' : '') + '>Next →</button>';
+	}
+	
+	html += '  <button class="btn-sm btn-outline copy-log-fs">Copy All</button>'
+		+ '  <button class="btn-sm btn-danger close-fs">✕ Close</button>'
+		+ '</div>'
+		+ '</div>';
+
+	if (results.req || results.res) {
+		html += '<div class="log-pair-view">';
+		
+		if (results.req) {
+			html += '<div><div style="color: #00d26a; font-size: 0.75rem; margin-bottom: 0.35rem; font-weight: 600;">REQUEST</div>'
+				+ '<pre>' + esc(results.req.content ? JSON.stringify(results.req.content, null, 2) : results.req.raw) + '</pre></div>';
+		}
+		
+		if (results.res) {
+			html += '<div><div style="color: #e94560; font-size: 0.75rem; margin-bottom: 0.35rem; font-weight: 600;">RESPONSE</div>'
+				+ '<pre>' + esc(results.res.content ? JSON.stringify(results.res.content, null, 2) : results.res.raw) + '</pre></div>';
+		}
+		
+		html += '</div>';
+	} else {
+		html += '<div class="log-empty">No data</div>';
+	}
+
+	logViewerFullscreen.innerHTML = html;
+
+	// Event listeners
+	if (hasNav) {
+		document.getElementById('prevLogFs')?.addEventListener('click', () => {
+			showLogAtIndex(currentLogIndex - 1);
+			renderFullscreenLog(currentLogData.id, currentLogData.results, currentLogData.index);
+		});
+		document.getElementById('nextLogFs')?.addEventListener('click', () => {
+			showLogAtIndex(currentLogIndex + 1);
+			renderFullscreenLog(currentLogData.id, currentLogData.results, currentLogData.index);
+		});
+	}
+	
+	logViewerFullscreen.querySelector('.close-fs')?.addEventListener('click', closeFullscreen);
+	
+	logViewerFullscreen.querySelector('.copy-log-fs')?.addEventListener('click', () => {
+		const text = JSON.stringify({ request: results.req?.content || results.req?.raw, response: results.res?.content || results.res?.raw }, null, 2);
+		navigator.clipboard.writeText(text).then(() => {
+			const btn = logViewerFullscreen.querySelector('.copy-log-fs');
+			btn.textContent = 'Copied!';
+			setTimeout(() => btn.textContent = 'Copy All', 1500);
+		});
+	});
+}
+
+function handleKeyNav(e) {
+	// ESC to close fullscreen
+	if (e.key === 'Escape' && isFullscreen) {
+		e.preventDefault();
+		closeFullscreen();
+		return;
+	}
+	
+	if (allLogs.length === 0) return;
+	
+	// Arrow keys for navigation (works in both normal and fullscreen)
+	if (e.key === 'ArrowLeft' && currentLogIndex > 0) {
+		e.preventDefault();
+		showLogAtIndex(currentLogIndex - 1);
+		if (isFullscreen) {
+			renderFullscreenLog(currentLogData.id, currentLogData.results, currentLogData.index);
+		}
+	} else if (e.key === 'ArrowRight' && currentLogIndex < allLogs.length - 1) {
+		e.preventDefault();
+		showLogAtIndex(currentLogIndex + 1);
+		if (isFullscreen) {
+			renderFullscreenLog(currentLogData.id, currentLogData.results, currentLogData.index);
+		}
+	}
+}
+
+// Register keyboard navigation globally
+document.addEventListener('keydown', handleKeyNav);
+
 </script>
 </body></html>`;
 }

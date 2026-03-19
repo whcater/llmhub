@@ -1,6 +1,13 @@
 import type { Env, Endpoint, ProviderConfig, ProviderName } from "./types";
 import { SUPPORTED_PROVIDERS } from "./types";
 import { handleAdmin } from "./admin";
+import {
+  writeRequestLog,
+  writeResponseLog,
+  type RequestLogData,
+  type ResponseLogData
+} from "./logger";
+
 
 const jsonResponse = (body: unknown, status = 200) =>
 	new Response(JSON.stringify(body), {
@@ -101,6 +108,9 @@ async function handleProxy(
 	provider: ProviderName,
 	subPath: string,
 ): Promise<Response> {
+	const startTime = Date.now();
+	const requestTimestamp = new Date().toISOString();
+	
 	// Auth
 	const authErr = await verifyToken(request, env);
 	if (authErr) return authErr;
@@ -113,8 +123,55 @@ async function handleProxy(
 
 	const { url, init } = buildUpstreamRequest(request, provider, subPath, endpoint);
 
+	// Clone request body for logging
+	let requestBody: any = undefined;
+	if (request.body && request.method !== "GET" && request.method !== "HEAD") {
+		try {
+			const clonedRequest = request.clone();
+			requestBody = await clonedRequest.json();
+		} catch {
+			// If not JSON, skip body logging
+		}
+	}
+
+	// Log request
+	const requestLogData: RequestLogData = {
+		timestamp: requestTimestamp,
+		method: request.method,
+		path: new URL(request.url).pathname,
+		headers: Object.fromEntries(request.headers.entries()),
+		body: requestBody,
+		query: new URL(request.url).search,
+		ip: request.headers.get('cf-connecting-ip') || undefined,
+		userAgent: request.headers.get('user-agent') || undefined,
+	};
+
+	const requestId = await writeRequestLog(env.LLMHUB_KV, requestLogData);
+
 	try {
 		const upstream = await fetch(url, init);
+		const responseTime = Date.now() - startTime;
+
+		// Clone response for logging
+		let responseBody: any = undefined;
+		const clonedResponse = upstream.clone();
+		try {
+			responseBody = await clonedResponse.json();
+		} catch {
+			// If not JSON, skip body logging
+		}
+
+		// Log response
+		const responseLogData: ResponseLogData = {
+			timestamp: new Date().toISOString(),
+			status: upstream.status,
+			responseTime,
+			body: responseBody,
+			headers: Object.fromEntries(upstream.headers.entries()),
+			requestId,
+		};
+
+		await writeResponseLog(env.LLMHUB_KV, responseLogData);
  
 		// Stream the response back as-is
 		return new Response(upstream.body, {
@@ -123,7 +180,20 @@ async function handleProxy(
 			headers: upstream.headers,
 		});
 	} catch (err: unknown) {
+		const responseTime = Date.now() - startTime;
 		const message = err instanceof Error ? err.message : "Unknown error";
+
+		// Log error response
+		const responseLogData: ResponseLogData = {
+			timestamp: new Date().toISOString(),
+			status: 502,
+			responseTime,
+			error: message,
+			requestId,
+		};
+
+		await writeResponseLog(env.LLMHUB_KV, responseLogData);
+
 		return jsonResponse({ error: `Upstream request failed: ${message}` }, 502);
 	}
 }
