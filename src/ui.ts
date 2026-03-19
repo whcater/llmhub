@@ -710,10 +710,10 @@ document.getElementById('logout').addEventListener('click', () => {
 });
 
 // ── Sidebar Navigation ──────────────────────
-const sections = document.querySelectorAll('.section, .provider-card, .logs-section, .cmd-section');
 const navLinks = document.querySelectorAll('.sidebar a');
+const navIds = Array.from(navLinks).map(l => l.getAttribute('href').slice(1));
 
-// Smooth scroll
+// Smooth scroll + update hash
 navLinks.forEach(link => {
 	link.addEventListener('click', (e) => {
 		e.preventDefault();
@@ -721,32 +721,59 @@ navLinks.forEach(link => {
 		const target = document.getElementById(targetId);
 		if (target) {
 			target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+			history.replaceState(null, '', '#' + targetId);
+			setActiveNav(targetId);
 		}
 	});
 });
 
-// Update active nav on scroll
+function setActiveNav(id) {
+	navLinks.forEach(link => {
+		link.classList.toggle('active', link.getAttribute('href') === '#' + id);
+	});
+}
+
+// Update active nav on scroll — re-query sections dynamically
 let scrollTimeout;
+let isAutoScrolling = false;
 window.addEventListener('scroll', () => {
+	if (isAutoScrolling) return;
 	clearTimeout(scrollTimeout);
 	scrollTimeout = setTimeout(() => {
 		let current = '';
-		sections.forEach(section => {
-			const sectionTop = section.offsetTop;
-			const sectionHeight = section.clientHeight;
-			if (window.scrollY >= sectionTop - 100) {
-				current = section.getAttribute('id');
+		for (const id of navIds) {
+			const el = document.getElementById(id);
+			if (el && el.getBoundingClientRect().top <= 120) {
+				current = id;
 			}
-		});
-		
-		navLinks.forEach(link => {
-			link.classList.remove('active');
-			if (link.getAttribute('href') === '#' + current) {
-				link.classList.add('active');
-			}
-		});
+		}
+		if (current) {
+			setActiveNav(current);
+			history.replaceState(null, '', '#' + current);
+		}
 	}, 100);
 });
+
+// Handle initial hash on page load
+function scrollToHash() {
+	const hash = location.hash.slice(1);
+	if (!hash) return;
+	// Retry a few times since dynamic sections may not exist yet
+	let tries = 0;
+	const attempt = () => {
+		const el = document.getElementById(hash);
+		if (el) {
+			isAutoScrolling = true;
+			el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+			setActiveNav(hash);
+			setTimeout(() => { isAutoScrolling = false; }, 800);
+		} else if (tries++ < 5) {
+			setTimeout(attempt, 300);
+		}
+	};
+	attempt();
+}
+setTimeout(scrollToHash, 200);
 
 // ── Logs ────────────────────────────────────
 const logFolderSelect = document.getElementById('logFolder');

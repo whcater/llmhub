@@ -1,7 +1,26 @@
 // Cloudflare Workers compatible logger using KV storage
 
+/**
+ * Convert Date to Shanghai timezone string (UTC+8)
+ * Format: YYYY-MM-DD HH:mm:ss.SSS
+ */
+function toShanghaiTime(date: Date): string {
+  // Add 8 hours for Shanghai timezone
+  const shanghaiTime = new Date(date.getTime() + 8 * 60 * 60 * 1000);
+  
+  const year = shanghaiTime.getUTCFullYear();
+  const month = String(shanghaiTime.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(shanghaiTime.getUTCDate()).padStart(2, '0');
+  const hour = String(shanghaiTime.getUTCHours()).padStart(2, '0');
+  const minute = String(shanghaiTime.getUTCMinutes()).padStart(2, '0');
+  const second = String(shanghaiTime.getUTCSeconds()).padStart(2, '0');
+  const ms = String(shanghaiTime.getUTCMilliseconds()).padStart(3, '0');
+  
+  return `${year}-${month}-${day} ${hour}:${minute}:${second}.${ms}`;
+}
+
 export interface RequestLogData {
-  timestamp: string;
+  timestamp: string; // Shanghai time: YYYY-MM-DD HH:mm:ss.SSS
   method: string;
   path: string;
   headers: Record<string, string>;
@@ -13,7 +32,7 @@ export interface RequestLogData {
 }
 
 export interface ResponseLogData {
-  timestamp: string;
+  timestamp: string; // Shanghai time: YYYY-MM-DD HH:mm:ss.SSS
   status: number;
   responseTime: number;
   body?: any;
@@ -23,7 +42,7 @@ export interface ResponseLogData {
 }
 
 export interface GeneralLogData {
-  timestamp: string;
+  timestamp: string; // Shanghai time: YYYY-MM-DD HH:mm:ss.SSS
   level: 'info' | 'warn' | 'error' | 'debug';
   message: string;
   data?: any;
@@ -68,7 +87,14 @@ export async function writeRequestLog(kv: KVNamespace, data: RequestLogData): Pr
     const requestId = data.requestId || generateRequestId();
 
     const key = `logs/${folderName}/${requestId}_req`;
-    const content = JSON.stringify(data, null, 2);
+    
+    // Convert timestamp to Shanghai time before saving
+    const logData = {
+      ...data,
+      timestamp: toShanghaiTime(timestamp),
+    };
+    
+    const content = JSON.stringify(logData, null, 2);
     
     await kv.put(key, content);
 
@@ -91,7 +117,14 @@ export async function writeResponseLog(kv: KVNamespace, data: ResponseLogData): 
     const requestId = data.requestId || generateRequestId();
 
     const key = `logs/${folderName}/${requestId}_res`;
-    const content = JSON.stringify(data, null, 2);
+    
+    // Convert timestamp to Shanghai time before saving
+    const logData = {
+      ...data,
+      timestamp: toShanghaiTime(timestamp),
+    };
+    
+    const content = JSON.stringify(logData, null, 2);
     
     await kv.put(key, content);
 
@@ -113,7 +146,11 @@ export async function writeGeneralLog(kv: KVNamespace, data: GeneralLogData): Pr
     const minute = String(timestamp.getMinutes()).padStart(2, '0');
 
     const key = `logs/${folderName}/${minute}.log`;
-    const logLine = `[${data.timestamp}] [${data.level.toUpperCase()}] ${data.message}${
+    
+    // Convert timestamp to Shanghai time for display
+    const shanghaiTimeStr = toShanghaiTime(timestamp);
+    
+    const logLine = `[${shanghaiTimeStr}] [${data.level.toUpperCase()}] ${data.message}${
       data.data ? '\n' + JSON.stringify(data.data, null, 2) : ''
     }\n${'='.repeat(80)}\n`;
 

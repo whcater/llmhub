@@ -109,7 +109,6 @@ async function handleProxy(
 	subPath: string,
 ): Promise<Response> {
 	const startTime = Date.now();
-	const requestTimestamp = new Date().toISOString();
 	
 	// Auth
 	const authErr = await verifyToken(request, env);
@@ -121,22 +120,40 @@ async function handleProxy(
 		return jsonResponse({ error: `No available endpoint for provider: ${provider}` }, 503);
 	}
 
-	const { url, init } = buildUpstreamRequest(request, provider, subPath, endpoint);
-
-	// Clone request body for logging
+	// Clone request body for logging BEFORE building upstream request
 	let requestBody: any = undefined;
+	let bodyForUpstream: BodyInit | undefined = undefined;
+	
 	if (request.body && request.method !== "GET" && request.method !== "HEAD") {
 		try {
-			const clonedRequest = request.clone();
-			requestBody = await clonedRequest.json();
+			// Read the body once and store it
+			const bodyText = await request.text();
+			
+			// Try to parse as JSON for logging
+			try {
+				requestBody = JSON.parse(bodyText);
+			} catch {
+				requestBody = bodyText; // Store as text if not JSON
+			}
+			
+			// Create new body for upstream request
+			bodyForUpstream = bodyText;
 		} catch {
-			// If not JSON, skip body logging
+			// If reading fails, skip body logging
 		}
 	}
 
-	// Log request
+	// Build upstream request with the stored body
+	const { url, init } = buildUpstreamRequest(request, provider, subPath, endpoint);
+	
+	// Override the body with our stored version
+	if (bodyForUpstream !== undefined) {
+		init.body = bodyForUpstream;
+	}
+
+	// Log request (timestamp will be converted to Shanghai time in logger)
 	const requestLogData: RequestLogData = {
-		timestamp: requestTimestamp,
+		timestamp: new Date().toISOString(),
 		method: request.method,
 		path: new URL(request.url).pathname,
 		headers: Object.fromEntries(request.headers.entries()),
@@ -161,7 +178,7 @@ async function handleProxy(
 			// If not JSON, skip body logging
 		}
 
-		// Log response
+		// Log response (timestamp will be converted to Shanghai time in logger)
 		const responseLogData: ResponseLogData = {
 			timestamp: new Date().toISOString(),
 			status: upstream.status,
@@ -183,7 +200,7 @@ async function handleProxy(
 		const responseTime = Date.now() - startTime;
 		const message = err instanceof Error ? err.message : "Unknown error";
 
-		// Log error response
+		// Log error response (timestamp will be converted to Shanghai time in logger)
 		const responseLogData: ResponseLogData = {
 			timestamp: new Date().toISOString(),
 			status: 502,
