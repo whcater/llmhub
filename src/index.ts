@@ -1,5 +1,5 @@
-import type { Env, Endpoint, ProviderConfig, ProviderName } from "./types";
-import { SUPPORTED_PROVIDERS } from "./types";
+import type { Env, Endpoint, ProviderConfig, ProviderName, SelectionStrategy } from "./types";
+import { SUPPORTED_PROVIDERS, DEFAULT_STRATEGY } from "./types";
 import { handleAdmin } from "./admin";
 import {
   writeRequestLog,
@@ -35,9 +35,72 @@ async function verifyToken(request: Request, env: Env): Promise<Response | null>
 	return null; // passed
 }
 
-// ── Endpoint selection (round-robin via timestamp) ───────────────────
+// ── Endpoint selection ────────────────────────────────────────────────
 
-async function selectEndpoint(provider: ProviderName, env: Env): Promise<Endpoint | null> {
+// In-memory state (per-isolate, resets on cold start)
+const rrCounters = new Map<string, number>();
+const stickyIndex = new Map<string, number>(); // for failover-on-error
+
+function maskKey(key: string): string {
+	if (!key) return "";
+	if (key.length <= 12) return key;
+	return key.slice(0, 6) + "..." + key.slice(-4);
+}
+
+function selectByStrategy(
+	enabled: Endpoint[],
+	strategy: SelectionStrategy,
+	provider: string,
+): Endpoint {
+	switch (strategy) {
+		case "failover-on-error": {
+			// Stick with current index until error triggers advance
+			const idx = (stickyIndex.get(provider) ?? 0) % enabled.length;
+			return enabled[idx];
+		}
+
+		case "round-robin": {
+			const idx = (rrCounters.get(provider) ?? 0) % enabled.length;
+			rrCounters.set(provider, idx + 1);
+			return enabled[idx];
+		}
+
+		case "random":
+			return enabled[Math.floor(Math.random() * enabled.length)];
+
+		case "failover":
+			return enabled[0];
+
+		case "weighted": {
+			const weights = enabled.map((e) => e.weight ?? 1);
+			const total = weights.reduce((a, b) => a + b, 0);
+			let r = Math.random() * total;
+			for (let i = 0; i < enabled.length; i++) {
+				r -= weights[i];
+				if (r <= 0) return enabled[i];
+			}
+			return enabled[enabled.length - 1];
+		}
+
+		default:
+			return enabled[Date.now() % enabled.length];
+	}
+}
+
+function advanceStickyIndex(provider: string, enabledCount: number): number {
+	const prev = stickyIndex.get(provider) ?? 0;
+	const next = (prev + 1) % enabledCount;
+	stickyIndex.set(provider, next);
+	return next;
+}
+
+interface EndpointSelection {
+	endpoint: Endpoint;
+	enabled: Endpoint[];
+	strategy: SelectionStrategy;
+}
+
+async function selectEndpoint(provider: ProviderName, env: Env): Promise<EndpointSelection | null> {
 	const raw = await env.LLMHUB_KV.get(`provider:${provider}`);
 	if (!raw) return null;
 
@@ -45,9 +108,8 @@ async function selectEndpoint(provider: ProviderName, env: Env): Promise<Endpoin
 	const enabled = config.endpoints.filter((e) => e.enabled);
 	if (enabled.length === 0) return null;
 
-	// Simple round-robin: use current timestamp so distribution is roughly even
-	// without requiring a KV write per request.
-	return enabled[Date.now() % enabled.length];
+	const strategy = config.strategy ?? DEFAULT_STRATEGY;
+	return { endpoint: selectByStrategy(enabled, strategy, provider), enabled, strategy };
 }
 
 // ── Proxy ────────────────────────────────────────────────────────────
@@ -109,49 +171,31 @@ async function handleProxy(
 	subPath: string,
 ): Promise<Response> {
 	const startTime = Date.now();
-	
+
 	// Auth
 	const authErr = await verifyToken(request, env);
 	if (authErr) return authErr;
 
-	// Endpoint
-	const endpoint = await selectEndpoint(provider, env);
-	if (!endpoint) {
+	// Endpoint selection
+	const selection = await selectEndpoint(provider, env);
+	if (!selection) {
 		return jsonResponse({ error: `No available endpoint for provider: ${provider}` }, 503);
 	}
 
-	// Clone request body for logging BEFORE building upstream request
+	// Read request body once for reuse (logging + possible retries)
 	let requestBody: any = undefined;
-	let bodyForUpstream: BodyInit | undefined = undefined;
-	
+	let bodyText: string | undefined = undefined;
+
 	if (request.body && request.method !== "GET" && request.method !== "HEAD") {
 		try {
-			// Read the body once and store it
-			const bodyText = await request.text();
-			
-			// Try to parse as JSON for logging
-			try {
-				requestBody = JSON.parse(bodyText);
-			} catch {
-				requestBody = bodyText; // Store as text if not JSON
-			}
-			
-			// Create new body for upstream request
-			bodyForUpstream = bodyText;
+			bodyText = await request.text();
+			try { requestBody = JSON.parse(bodyText); } catch { requestBody = bodyText; }
 		} catch {
 			// If reading fails, skip body logging
 		}
 	}
 
-	// Build upstream request with the stored body
-	const { url, init } = buildUpstreamRequest(request, provider, subPath, endpoint);
-	
-	// Override the body with our stored version
-	if (bodyForUpstream !== undefined) {
-		init.body = bodyForUpstream;
-	}
-
-	// Log request (timestamp will be converted to Shanghai time in logger)
+	// Log request
 	const requestLogData: RequestLogData = {
 		timestamp: new Date().toISOString(),
 		method: request.method,
@@ -162,57 +206,88 @@ async function handleProxy(
 		ip: request.headers.get('cf-connecting-ip') || undefined,
 		userAgent: request.headers.get('user-agent') || undefined,
 	};
-
 	const requestId = await writeRequestLog(env.LLMHUB_KV, requestLogData);
 
-	try {
-		const upstream = await fetch(url, init);
-		const responseTime = Date.now() - startTime;
+	const { enabled, strategy } = selection;
+	let currentEndpoint = selection.endpoint;
 
-		// Clone response for logging
-		let responseBody: any = undefined;
-		const clonedResponse = upstream.clone();
-		try {
-			responseBody = await clonedResponse.json();
-		} catch {
-			// If not JSON, skip body logging
+	// For failover-on-error: try up to N endpoints
+	const maxAttempts = strategy === "failover-on-error" ? enabled.length : 1;
+
+	for (let attempt = 0; attempt < maxAttempts; attempt++) {
+		const { url, init } = buildUpstreamRequest(request, provider, subPath, currentEndpoint);
+		if (bodyText !== undefined) init.body = bodyText;
+
+		if (attempt > 0) {
+			console.log(`[${provider}] Endpoint failed, switching to key ${maskKey(currentEndpoint.apiKey)} (attempt ${attempt + 1}/${maxAttempts})`);
+		} else {
+			console.log(`[${provider}] Using key ${maskKey(currentEndpoint.apiKey)}`);
 		}
 
-		// Log response (timestamp will be converted to Shanghai time in logger)
-		const responseLogData: ResponseLogData = {
-			timestamp: new Date().toISOString(),
-			status: upstream.status,
-			responseTime,
-			body: responseBody,
-			headers: Object.fromEntries(upstream.headers.entries()),
-			requestId,
-		};
+		try {
+			const upstream = await fetch(url, init);
+			const responseTime = Date.now() - startTime;
 
-		await writeResponseLog(env.LLMHUB_KV, responseLogData);
- 
-		// Stream the response back as-is
-		return new Response(upstream.body, {
-			status: upstream.status,
-			statusText: upstream.statusText,
-			headers: upstream.headers,
-		});
-	} catch (err: unknown) {
-		const responseTime = Date.now() - startTime;
-		const message = err instanceof Error ? err.message : "Unknown error";
+			// On failover-on-error: if upstream returned 5xx/429, try next endpoint
+			const shouldRetry = strategy === "failover-on-error"
+				&& (upstream.status >= 500 || upstream.status === 429)
+				&& attempt < maxAttempts - 1;
 
-		// Log error response (timestamp will be converted to Shanghai time in logger)
-		const responseLogData: ResponseLogData = {
-			timestamp: new Date().toISOString(),
-			status: 502,
-			responseTime,
-			error: message,
-			requestId,
-		};
+			if (shouldRetry) {
+				console.log(`[${provider}] Key ${maskKey(currentEndpoint.apiKey)} returned ${upstream.status}, advancing...`);
+				const nextIdx = advanceStickyIndex(provider, enabled.length);
+				currentEndpoint = enabled[nextIdx];
+				continue;
+			}
 
-		await writeResponseLog(env.LLMHUB_KV, responseLogData);
+			// Success or final attempt — log and return
+			let responseBody: any = undefined;
+			const clonedResponse = upstream.clone();
+			try { responseBody = await clonedResponse.json(); } catch {}
 
-		return jsonResponse({ error: `Upstream request failed: ${message}` }, 502);
+			const responseLogData: ResponseLogData = {
+				timestamp: new Date().toISOString(),
+				status: upstream.status,
+				responseTime,
+				body: responseBody,
+				headers: Object.fromEntries(upstream.headers.entries()),
+				requestId,
+			};
+			await writeResponseLog(env.LLMHUB_KV, responseLogData);
+
+			return new Response(upstream.body, {
+				status: upstream.status,
+				statusText: upstream.statusText,
+				headers: upstream.headers,
+			});
+		} catch (err: unknown) {
+			const message = err instanceof Error ? err.message : "Unknown error";
+
+			// On failover-on-error: network error, try next endpoint
+			if (strategy === "failover-on-error" && attempt < maxAttempts - 1) {
+				console.log(`[${provider}] Key ${maskKey(currentEndpoint.apiKey)} network error: ${message}, advancing...`);
+				const nextIdx = advanceStickyIndex(provider, enabled.length);
+				currentEndpoint = enabled[nextIdx];
+				continue;
+			}
+
+			// Final attempt failed
+			const responseTime = Date.now() - startTime;
+			const responseLogData: ResponseLogData = {
+				timestamp: new Date().toISOString(),
+				status: 502,
+				responseTime,
+				error: message,
+				requestId,
+			};
+			await writeResponseLog(env.LLMHUB_KV, responseLogData);
+
+			return jsonResponse({ error: `Upstream request failed: ${message}` }, 502);
+		}
 	}
+
+	// Should not reach here, but safety net
+	return jsonResponse({ error: "All endpoints exhausted" }, 503);
 }
 
 // ── Router ──────────────────────────────────────────────────────────

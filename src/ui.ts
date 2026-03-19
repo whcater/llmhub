@@ -290,6 +290,24 @@ header .logout:hover { color: ${COLORS.primary}; }
 }
 .cmd-copy:hover { color: ${COLORS.text}; border-color: ${COLORS.textDim}; }
 
+/* Strategy selector */
+.strategy-row {
+	display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem;
+	padding-bottom: 0.75rem; border-bottom: 1px solid ${COLORS.border};
+}
+.strategy-label { font-size: 0.8rem; color: ${COLORS.textDim}; font-weight: 500; }
+.strategy-select {
+	padding: 0.35rem 0.55rem; border-radius: 6px; border: 1px solid ${COLORS.border};
+	background: ${COLORS.input}; color: ${COLORS.text}; outline: none; font-family: inherit;
+	font-size: 0.8rem; cursor: pointer;
+}
+.strategy-select:focus { border-color: ${COLORS.primary}; }
+.strategy-hint { font-size: 0.75rem; color: ${COLORS.textDim}; font-style: italic; }
+.ep-weight-cell { min-width: 36px; text-align: center; font-size: 0.75rem; color: ${COLORS.primary}; }
+.edit-weight { width: 60px !important; }
+.weight-field { max-width: 70px; }
+.hidden { display: none !important; }
+
 /* Cmd popup in endpoint rows */
 .cmd-popup-wrap { position: relative; display: inline-block; }
 .cmd-popup {
@@ -479,14 +497,17 @@ pwForm.addEventListener('submit', async e => {
 
 // ── Providers ───────────────────────────────
 let providerData = {};
+let providerStrategy = {};
 
 async function loadProviders() {
 	const r = await api('/providers');
 	if (!r) return;
 	const d = await r.json();
 	providerData = {};
+	providerStrategy = {};
 	for (const [name, cfg] of Object.entries(d.providers)) {
 		providerData[name] = cfg ? cfg.endpoints : [];
+		providerStrategy[name] = cfg ? (cfg.strategy || 'failover-on-error') : 'failover-on-error';
 	}
 	renderProviders();
 }
@@ -503,10 +524,28 @@ function buildCard(name, endpoints) {
 	const card = document.createElement('div');
 	card.className = 'provider-card';
 	card.id = name;
+	const currentStrategy = providerStrategy[name] || 'failover-on-error';
+	const strategies = [
+		['failover-on-error', 'Failover on Error'],
+		['round-robin', 'Round Robin'],
+		['random', 'Random'],
+		['failover', 'Failover (Priority)'],
+		['weighted', 'Weighted Random'],
+	];
+	const strategyOpts = strategies.map(([v, l]) =>
+		'<option value="' + v + '"' + (v === currentStrategy ? ' selected' : '') + '>' + l + '</option>'
+	).join('');
+
 	card.innerHTML = '<h2>' + name + '</h2>'
+		+ '<div class="strategy-row">'
+		+ '  <label class="strategy-label">Strategy</label>'
+		+ '  <select class="strategy-select" data-strategy>' + strategyOpts + '</select>'
+		+ '  <span class="strategy-hint" data-hint></span>'
+		+ '</div>'
 		+ '<div class="add-form">'
 		+ '  <div class="field"><label>Base URL</label><input type="url" placeholder="https://..." data-url></div>'
 		+ '  <div class="field"><label>API Key</label><input type="text" placeholder="sk-..." data-key></div>'
+		+ '  <div class="field weight-field' + (currentStrategy !== 'weighted' ? ' hidden' : '') + '"><label>Weight</label><input type="number" min="1" max="100" value="1" data-weight></div>'
 		+ '  <button class="btn-sm btn-primary add-btn">Add</button>'
 		+ '</div>'
 		+ '<div class="ep-list" data-list></div>'
@@ -515,15 +554,39 @@ function buildCard(name, endpoints) {
 		+ '  <span class="test-indicator batch-result" data-batch></span>'
 		+ '</div>';
 
+	const hints = {
+		'failover-on-error': 'Sticks with current endpoint; auto-switches on error (5xx/429/network)',
+		'round-robin': 'Cycles through endpoints in order',
+		'random': 'Picks a random endpoint each request',
+		'failover': 'Always uses the first enabled endpoint; others are backup',
+		'weighted': 'Random selection weighted by each endpoint\\'s weight value',
+	};
+	const hintEl = card.querySelector('[data-hint]');
+	hintEl.textContent = hints[currentStrategy] || '';
+
+	// Strategy change
+	const strategySelect = card.querySelector('[data-strategy]');
+	strategySelect.addEventListener('change', () => {
+		const val = strategySelect.value;
+		providerStrategy[name] = val;
+		hintEl.textContent = hints[val] || '';
+		// Toggle weight column
+		card.querySelector('.weight-field')?.classList.toggle('hidden', val !== 'weighted');
+		card.querySelectorAll('.ep-weight-cell').forEach(el => el.classList.toggle('hidden', val !== 'weighted'));
+		saveProvider(name);
+	});
+
 	// Add button
 	card.querySelector('.add-btn').addEventListener('click', () => {
 		const url = card.querySelector('[data-url]').value.trim();
 		const key = card.querySelector('[data-key]').value.trim();
+		const weight = parseInt(card.querySelector('[data-weight]')?.value) || 1;
 		if (!url || !key) return;
 		providerData[name] = providerData[name] || [];
-		providerData[name].push({ baseUrl: url, apiKey: key, enabled: true });
+		providerData[name].push({ baseUrl: url, apiKey: key, enabled: true, weight: Math.max(1, weight) });
 		card.querySelector('[data-url]').value = '';
 		card.querySelector('[data-key]').value = '';
+		if (card.querySelector('[data-weight]')) card.querySelector('[data-weight]').value = '1';
 		saveProvider(name);
 	});
 
@@ -538,6 +601,7 @@ function renderEndpoints(name, card, endpoints) {
 	const list = card.querySelector('[data-list]');
 	list.innerHTML = '';
 	if (!endpoints.length) { list.innerHTML = '<div class="no-ep">No endpoints configured</div>'; return; }
+	const isWeighted = providerStrategy[name] === 'weighted';
 
 	endpoints.forEach((ep, i) => {
 		const row = document.createElement('div');
@@ -546,6 +610,7 @@ function renderEndpoints(name, card, endpoints) {
 			'<input type="checkbox"' + (ep.enabled ? ' checked' : '') + ' data-toggle>'
 			+ '<span class="mono url" title="' + esc(ep.baseUrl) + '">' + esc(mask(ep.baseUrl, 30)) + '</span>'
 			+ '<span class="mono key" title="API Key">' + esc(mask(ep.apiKey, 8)) + '</span>'
+			+ '<span class="ep-weight-cell mono' + (isWeighted ? '' : ' hidden') + '" title="Weight">w:' + (ep.weight || 1) + '</span>'
 			+ '<span class="test-indicator" data-ti></span>'
 			+ '<div class="actions">'
 			+ '  <button class="btn-sm btn-success test-one">Test</button>'
@@ -588,6 +653,7 @@ function renderEndpoints(name, card, endpoints) {
 		row.querySelector('.edit-btn').addEventListener('click', () => {
 			const urlSpan = row.querySelector('.url');
 			const keySpan = row.querySelector('.key');
+			const weightSpan = row.querySelector('.ep-weight-cell');
 			const actionsDiv = row.querySelector('.actions');
 
 			const urlInput = document.createElement('input');
@@ -602,6 +668,16 @@ function renderEndpoints(name, card, endpoints) {
 			keyInput.value = ep.apiKey;
 			keySpan.replaceWith(keyInput);
 
+			if (weightSpan) {
+				const weightInput = document.createElement('input');
+				weightInput.type = 'number';
+				weightInput.min = '1';
+				weightInput.max = '100';
+				weightInput.className = 'edit-input edit-weight' + (isWeighted ? '' : ' hidden');
+				weightInput.value = String(ep.weight || 1);
+				weightSpan.replaceWith(weightInput);
+			}
+
 			actionsDiv.innerHTML =
 				'<button class="btn-sm btn-primary save-btn">Save</button>'
 				+ '<button class="btn-sm btn-outline cancel-btn">Cancel</button>';
@@ -612,6 +688,8 @@ function renderEndpoints(name, card, endpoints) {
 				if (!newUrl || !newKey) return;
 				providerData[name][i].baseUrl = newUrl;
 				providerData[name][i].apiKey = newKey;
+				const wInput = row.querySelector('.edit-weight');
+				if (wInput) providerData[name][i].weight = Math.max(1, parseInt(wInput.value) || 1);
 				saveProvider(name);
 			});
 
@@ -629,7 +707,7 @@ function esc(s) { const d = document.createElement('div'); d.textContent = s; re
 async function saveProvider(name) {
 	await api('/providers/' + name, {
 		method: 'POST',
-		body: JSON.stringify({ endpoints: providerData[name] || [] }),
+		body: JSON.stringify({ endpoints: providerData[name] || [], strategy: providerStrategy[name] || 'failover-on-error' }),
 	});
 	renderProviders();
 }
