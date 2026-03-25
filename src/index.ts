@@ -24,11 +24,15 @@ async function verifyToken(request: Request, env: Env): Promise<Response | null>
 	}
 
 	const authorization = request.headers.get("Authorization");
-	if (!authorization?.startsWith("Bearer ")) {
+	const xApiKey = request.headers.get("x-api-key");
+
+	if (!authorization?.startsWith("Bearer ") && !xApiKey) {
 		return jsonResponse({ error: "Missing or invalid Authorization header" }, 401);
 	}
 
-	if (authorization.slice(7) !== authToken) {
+	const token = xApiKey ?? authorization?.slice(7);
+
+	if (token !== authToken) {
 		return jsonResponse({ error: "Invalid token" }, 403);
 	}
 
@@ -155,6 +159,21 @@ function buildUpstreamRequest(
 			});
 			targetUrl = u.toString();
 			break;
+		}
+	}
+
+	// Debug: log x-api-key and Authorization before normalization
+	const xApiKey = headers.get("x-api-key");
+	const authHeader = headers.get("Authorization");
+	console.log(`[${provider}] x-api-key: ${xApiKey ? maskKey(xApiKey) : "(none)"}`);
+	console.log(`[${provider}] Authorization: ${authHeader ? maskKey(authHeader) : "(none)"}`);
+
+	if (xApiKey) {
+		if (authHeader) {
+			headers.delete("x-api-key");
+		} else {
+			headers.set("Authorization", `Bearer ${xApiKey}`);
+			headers.delete("x-api-key");
 		}
 	}
 
