@@ -2,10 +2,10 @@ import type { Env, Endpoint, ProviderConfig, ProviderName, SelectionStrategy } f
 import { SUPPORTED_PROVIDERS, DEFAULT_STRATEGY } from "./types";
 import { handleAdmin } from "./admin";
 import {
-  writeRequestLog,
-  writeResponseLog,
-  type RequestLogData,
-  type ResponseLogData
+	writeRequestLog,
+	writeResponseLog,
+	type RequestLogData,
+	type ResponseLogData
 } from "./logger";
 
 
@@ -116,6 +116,13 @@ async function selectEndpoint(provider: ProviderName, env: Env): Promise<Endpoin
 	return { endpoint: selectByStrategy(enabled, strategy, provider), enabled, strategy };
 }
 
+function formatBytes(value: string | null): string {
+	const bytes = value ? parseInt(value, 10) : 0;
+	if (bytes === 0) return '0 B';
+	const units = ['B', 'KB', 'MB', 'GB'];
+	const i = Math.floor(Math.log(bytes) / Math.log(1024));
+	return `${(bytes / Math.pow(1024, i)).toFixed(2)} ${units[i]}`;
+}
 // ── Proxy ────────────────────────────────────────────────────────────
 
 function buildUpstreamRequest(
@@ -132,6 +139,32 @@ function buildUpstreamRequest(
 	headers.delete("Authorization");
 	// Remove host so fetch uses the target host
 	headers.delete("Host");
+
+	// Transform headers for Claude CLI requests identified by anthropic-beta prefix
+	const anthropicBeta = headers.get("anthropic-beta");
+	if (anthropicBeta?.startsWith("fine-grained-tool-streaming")) {
+		console.log('\nOpenClaw: ', anthropicBeta);
+		// headers.set("anthropic-beta", "claude-code-20250219,adaptive-thinking-2026-01-28,prompt-caching-scope-2026-01-05,effort-2025-11-24");
+		// headers.set("anthropic-dangerous-direct-browser-access", "true");
+		// headers.set("anthropic-version", "2023-06-01");
+		// headers.set("user-agent", "claude-cli/2.1.79 (external, cli)");
+		// headers.set("x-app", "cli");
+		// headers.set("sec-fetch-mode", "cors");
+		// headers.set("x-stainless-arch", "x64");
+		// headers.set("x-stainless-lang", "js");
+		// headers.set("x-stainless-os", "MacOS");
+		// headers.set("x-stainless-package-version", "0.74.0");
+		// headers.set("x-stainless-retry-count", "0");
+		// headers.set("x-stainless-runtime", "node");
+		// headers.set("x-stainless-runtime-version", "v22.20.0");
+		// headers.set("x-stainless-timeout", "600");
+		// headers.set("host","localhost");
+	}
+	else
+		console.log('\nClaude Code', anthropicBeta);
+
+	const bodySize = headers.get('content-length');
+	console.log(`Request body size: ${formatBytes(bodySize)} `);
 
 	let targetUrl: string;
 
@@ -214,6 +247,26 @@ async function handleProxy(
 		}
 	}
 
+	// Inject system records for Claude CLI requests
+	const anthropicBeta = request.headers.get("anthropic-beta");
+	if (anthropicBeta?.startsWith("fine-grained-tool-streaming") && requestBody && typeof requestBody === "object") {
+		console.log('handleBody..');
+
+		// const systemPrefix = [
+		// 	{ type: "text", text: "x-anthropic-billing-header: cc_version=2.1.79.04b; cc_entrypoint=cli; cch=00000;" },
+		// 	{ type: "text", text: "You are Claude Code, Anthropic's official CLI for Claude.", cache_control: { type: "ephemeral" } },
+		// 	{ type: "text", text: "\nYou are an interactive agent that helps users with software engineering tasks. ", cache_control: { type: "ephemeral" } },
+		// ];
+		// const existingSystem = Array.isArray(requestBody.system) ? requestBody.system : [];
+		// requestBody.system = [...systemPrefix, ...existingSystem];
+		// requestBody.metadata = { user_id: "user_ba68116b494712900a4328b3bdb88d53e61182beeb3fb871336b8032c671225f_account__session_cd3ffd7d-0123-4908-b0c5-6b63e74e6bb9" };
+		// requestBody.max_tokens = requestBody.max_tokens ?? 64000;
+		// requestBody.thinking = requestBody.thinking ?? { type: "adaptive" };
+		// requestBody.output_config = requestBody.output_config ?? { effort: "medium" };
+		// requestBody.stream = true;
+		// bodyText = JSON.stringify(requestBody);
+	}
+
 	// Log request
 	const requestLogData: RequestLogData = {
 		timestamp: new Date().toISOString(),
@@ -262,7 +315,7 @@ async function handleProxy(
 			// Success or final attempt — log and return
 			let responseBody: any = undefined;
 			const clonedResponse = upstream.clone();
-			try { responseBody = await clonedResponse.json(); } catch {}
+			try { responseBody = await clonedResponse.json(); } catch { }
 
 			const responseLogData: ResponseLogData = {
 				timestamp: new Date().toISOString(),
