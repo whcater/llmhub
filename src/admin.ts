@@ -1,5 +1,6 @@
 import type { Env, ProviderConfig, ProviderName } from "./types";
 import { loginPage, adminPage } from "./ui";
+import { cleanupOldLogs } from "./logger";
 
 const SUPPORTED_PROVIDERS: ProviderName[] = ["anthropic", "openai", "gemini", "grok"];
 
@@ -371,6 +372,15 @@ async function listLogFiles(request: Request, env: Env, folder: string): Promise
 	return json({ folder, files });
 }
 
+async function cleanupLogs(request: Request, env: Env): Promise<Response> {
+	if (request.method !== "POST") return json({ error: "Method not allowed" }, 405);
+
+	const body = await request.json<{ days?: number }>().catch(() => ({}));
+	const days = (body as any).days || 3;
+	const deleted = await cleanupOldLogs(env.LLMHUB_KV, days);
+	return json({ ok: true, deleted, retentionDays: days });
+}
+
 async function getLogContent(request: Request, env: Env): Promise<Response> {
 	if (request.method !== "GET") return json({ error: "Method not allowed" }, 405);
 
@@ -410,6 +420,7 @@ export async function handleAdmin(request: Request, env: Env, path: string): Pro
 		if (path === "/admin/api/test-batch") return testBatch(request, env);
 		if (path === "/admin/api/change-password") return changePassword(request, env);
 		if (path === "/admin/api/logs") return listLogFolders(request, env);
+		if (path === "/admin/api/logs/cleanup") return cleanupLogs(request, env);
 		if (path === "/admin/api/log-content") return getLogContent(request, env);
 
 		// Match /admin/api/providers/:name

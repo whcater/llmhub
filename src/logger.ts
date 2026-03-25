@@ -196,6 +196,33 @@ export async function writeLog(kv: KVNamespace, entry: RequestLogEntry): Promise
 }
 
 /**
+ * Clean up logs older than the specified number of days
+ * Folder format: YYYY-MM-DD-HH
+ * Returns the number of deleted keys
+ */
+export async function cleanupOldLogs(kv: KVNamespace, retentionDays: number = 3): Promise<number> {
+  const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
+  const cutoffFolder = getLogFolderName(cutoff);
+
+  let deleted = 0;
+  let cursor: string | undefined;
+
+  do {
+    const list = await kv.list({ prefix: "logs/", cursor });
+    for (const key of list.keys) {
+      const match = key.name.match(/^logs\/([^/]+)\//);
+      if (match && match[1] < cutoffFolder) {
+        await kv.delete(key.name);
+        deleted++;
+      }
+    }
+    cursor = list.list_complete ? undefined : list.cursor;
+  } while (cursor);
+
+  return deleted;
+}
+
+/**
  * Get current log key path
  */
 export function getCurrentLogFilePath(): string {

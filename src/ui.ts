@@ -391,6 +391,7 @@ header .logout:hover { color: ${COLORS.primary}; }
 				<span>Auto-refresh (5s)</span>
 			</label>
 			<button class="btn-sm btn-outline" id="browseAll">Browse All</button>
+			<button class="btn-sm btn-danger" id="cleanupLogs">Clean Up (3d+)</button>
 		</div>
 		<div class="log-list" id="logList"></div>
 		<div class="log-viewer" id="logViewer">
@@ -1223,6 +1224,29 @@ function handleKeyNav(e) {
 
 // Register keyboard navigation globally
 document.addEventListener('keydown', handleKeyNav);
+
+// Clean up old logs
+document.getElementById('cleanupLogs').addEventListener('click', async () => {
+	if (!confirm('Delete all logs older than 1 days?')) return;
+	const btn = document.getElementById('cleanupLogs');
+	btn.disabled = true;
+	btn.textContent = 'Cleaning...';
+	try {
+		const r = await api('/logs/cleanup', { method: 'POST', body: JSON.stringify({ days: 1 }) });
+		if (r) {
+			const d = await r.json();
+			btn.textContent = d.deleted + ' deleted';
+			setTimeout(() => { btn.textContent = 'Clean Up (1d+)'; btn.disabled = false; }, 2000);
+			await loadLogFolders();
+		} else {
+			btn.textContent = 'Clean Up (1d+)';
+			btn.disabled = false;
+		}
+	} catch {
+		btn.textContent = 'Failed';
+		setTimeout(() => { btn.textContent = 'Clean Up (3d+)'; btn.disabled = false; }, 2000);
+	}
+});
 
 </script>
 </body></html>`;
