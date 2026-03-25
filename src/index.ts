@@ -302,7 +302,7 @@ async function handleProxy(
 
 			// On failover-on-error: if upstream returned 5xx/429, try next endpoint
 			const shouldRetry = strategy === "failover-on-error"
-				&& (upstream.status >= 500 || upstream.status === 429)
+				&& (upstream.status >= 500 || upstream.status === 429 || upstream.status === 403)
 				&& attempt < maxAttempts - 1;
 
 			if (shouldRetry) {
