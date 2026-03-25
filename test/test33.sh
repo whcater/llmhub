@@ -1,4 +1,4 @@
-curl -X POST 'http://localhost:8787/anthropic/v1/messages?beta=true' \
+curl -X POST 'http://localhost:3001/a-ocnfniawgw.cn-shanghai.fcapp.run/v1/messages?beta=true' \
   -H 'accept: application/json' \
   -H 'accept-encoding: gzip, deflate' \
   -H 'accept-language: *' \
@@ -18,4 +18,4 @@ curl -X POST 'http://localhost:8787/anthropic/v1/messages?beta=true' \
   -H 'x-stainless-runtime: node' \
   -H 'x-stainless-runtime-version: v22.20.0' \
   -H 'x-stainless-timeout: 600' \
-  -d @./body.json
+  -d @./body33.json

@@ -1,11 +1,11 @@
-curl -X POST 'http://localhost:8788/anthropic/v1/messages?beta=true' \
+curl -X POST 'http://localhost:3001/a-ocnfniawgw.cn-shanghai.fcapp.run/v1/messages?beta=true' \
   -H 'accept: application/json' \
   -H 'accept-encoding: gzip, deflate' \
   -H 'accept-language: *' \
   -H 'anthropic-beta: claude-code-20250219,adaptive-thinking-2026-01-28,prompt-caching-scope-2026-01-05,effort-2025-11-24' \
   -H 'anthropic-dangerous-direct-browser-access: true' \
   -H 'anthropic-version: 2023-06-01' \
-  -H "authorization: Bearer $ANTHROPIC_API_KEY_LOCAL" \
+  -H "authorization: Bearer $ANTHROPIC_AUTH_TOKEN" \
   -H 'content-type: application/json' \
   -H 'sec-fetch-mode: cors' \
   -H 'user-agent: claude-cli/2.1.71 (external, cli)' \
@@ -18,4 +18,4 @@ curl -X POST 'http://localhost:8788/anthropic/v1/messages?beta=true' \
   -H 'x-stainless-runtime: node' \
   -H 'x-stainless-runtime-version: v22.20.0' \
   -H 'x-stainless-timeout: 600' \
-  -d @./body.json
+  -d @./body22.json
