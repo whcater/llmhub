@@ -119,9 +119,10 @@ async function selectEndpoint(provider: ProviderName, env: Env): Promise<Endpoin
 function formatBytes(value: string | null): string {
 	const bytes = value ? parseInt(value, 10) : 0;
 	if (bytes === 0) return '0 B';
-	const units = ['B', 'KB', 'MB', 'GB'];
-	const i = Math.floor(Math.log(bytes) / Math.log(1024));
-	return `${(bytes / Math.pow(1024, i)).toFixed(2)} ${units[i]}`;
+	return `${(bytes/1024).toFixed(2)} KB`;
+	// const units = ['B', 'KB', 'MB', 'GB'];
+	// const i = Math.floor(Math.log(bytes) / Math.log(1024));
+	// return `${(bytes / Math.pow(1024, i)).toFixed(2)} ${units[i]}`;
 }
 // ── Proxy ────────────────────────────────────────────────────────────
 
