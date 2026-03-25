@@ -1257,7 +1257,7 @@ document.getElementById('cleanupLogs').addEventListener('click', async () => {
 		}
 	} catch {
 		btn.textContent = 'Failed';
-		setTimeout(() => { btn.textContent = 'Clean Up (3d+)'; btn.disabled = false; }, 2000);
+		setTimeout(() => { btn.textContent = 'Clean Up (1d+)'; btn.disabled = false; }, 2000);
 	}
 });
 
