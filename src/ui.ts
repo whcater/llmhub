@@ -977,6 +977,17 @@ async function showLogAtIndex(index) {
 	renderLogPairWithNav(id, results, index);
 }
 
+function formatLogTime(requestId) {
+	const tsStr = requestId.split('-')[0];
+	const ts = parseInt(tsStr, 10);
+	if (isNaN(ts)) return '';
+	const d = new Date(ts + 8 * 60 * 60 * 1000); // Shanghai UTC+8
+	const HH = String(d.getUTCHours()).padStart(2, '0');
+	const mm = String(d.getUTCMinutes()).padStart(2, '0');
+	const ss = String(d.getUTCSeconds()).padStart(2, '0');
+	return HH + ':' + mm + ':' + ss;
+}
+
 function renderLogList() {
 	logList.innerHTML = '';
 	if (!currentFiles.length) {
@@ -1001,7 +1012,9 @@ function renderLogList() {
 		item.className = 'log-item';
 		const hasReq = files.req ? '<span class="req">REQ</span>' : '';
 		const hasRes = files.res ? '<span class="res">RES</span>' : '';
-		item.innerHTML = hasReq + (hasReq && hasRes ? ' + ' : '') + hasRes + ' ' + esc(id);
+		const timeStr = formatLogTime(id);
+		const timeLabel = timeStr ? '<span style="color:#e94560;font-weight:600;">' + timeStr + '</span> ' : '';
+		item.innerHTML = timeLabel + hasReq + (hasReq && hasRes ? ' + ' : '') + hasRes + ' <span style="opacity:0.5">' + esc(id) + '</span>';
 		item.addEventListener('click', () => viewLogPair(id, files, idx));
 		logList.appendChild(item);
 	});
