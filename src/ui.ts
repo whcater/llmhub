@@ -391,7 +391,7 @@ header .logout:hover { color: ${COLORS.primary}; }
 				<span>Auto-refresh (5s)</span>
 			</label>
 			<button class="btn-sm btn-outline" id="browseAll">Browse All</button>
-			<button class="btn-sm btn-danger" id="cleanupLogs">Clean Up (3d+)</button>
+			<button class="btn-sm btn-danger" id="cleanupLogs">Clean Up (1d+)</button>
 		</div>
 		<div class="log-list" id="logList"></div>
 		<div class="log-viewer" id="logViewer">
