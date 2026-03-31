@@ -251,7 +251,7 @@ async function handleProxy(
 	// Inject system records for Claude CLI requests
 	const anthropicBeta = request.headers.get("anthropic-beta");
 	if (anthropicBeta?.startsWith("fine-grained-tool-streaming") && requestBody && typeof requestBody === "object") {
-		console.log('handleBody..');
+		// console.log('handleBody..');
 
 		// const systemPrefix = [
 		// 	{ type: "text", text: "x-anthropic-billing-header: cc_version=2.1.79.04b; cc_entrypoint=cli; cch=00000;" },
@@ -287,6 +287,9 @@ async function handleProxy(
 	// For failover-on-error: try up to N endpoints
 	const maxAttempts = strategy === "failover-on-error" ? enabled.length : 1;
 
+	let BASE_DELAY_MS = 2000;  
+
+
 	for (let attempt = 0; attempt < maxAttempts; attempt++) {
 		const { url, init } = buildUpstreamRequest(request, provider, subPath, currentEndpoint);
 		if (bodyText !== undefined) init.body = bodyText;
@@ -303,13 +306,15 @@ async function handleProxy(
 
 			// On failover-on-error: if upstream returned 5xx/429, try next endpoint
 			const shouldRetry = strategy === "failover-on-error"
-				&& (upstream.status >= 500 || upstream.status === 429 || upstream.status === 403)
+				&& (upstream.status >= 400)
+				// && (upstream.status >= 500 || upstream.status === 429 || upstream.status === 403)
 				&& attempt < maxAttempts - 1;
 
 			if (shouldRetry) {
 				console.log(`[${provider}] Key ${maskKey(currentEndpoint.apiKey)} returned ${upstream.status}, advancing...`);
+				await scheduler.wait(BASE_DELAY_MS);
 				const nextIdx = advanceStickyIndex(provider, enabled.length);
-				currentEndpoint = enabled[nextIdx];
+				currentEndpoint = enabled[nextIdx]; 
 				continue;
 			}
 
@@ -317,6 +322,7 @@ async function handleProxy(
 			let responseBody: any = undefined;
 			const clonedResponse = upstream.clone();
 			try { responseBody = await clonedResponse.json(); } catch { }
+			if(responseBody) console.log(responseBody);
 
 			const responseLogData: ResponseLogData = {
 				timestamp: new Date().toISOString(),
