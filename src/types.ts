@@ -7,6 +7,7 @@ export interface Endpoint {
 	apiKey: string;
 	enabled: boolean;
 	weight?: number; // for weighted strategy, default 1
+	model?: string; // optional model name, if set will override request body model
 }
 
 export type SelectionStrategy = "failover-on-error" | "round-robin" | "random" | "failover" | "weighted";

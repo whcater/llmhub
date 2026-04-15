@@ -174,7 +174,8 @@ header .logout:hover { color: ${COLORS.primary}; }
 }
 .ep-row .mono { font-family: 'SF Mono','Fira Code',monospace; font-size: 0.78rem; color: ${COLORS.textDim}; }
 .ep-row .url { flex: 1; min-width: 100px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ep-row .key { width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ep-row .key { width: 100px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ep-row .model { width: 100px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #e94560; font-size: 0.75rem; }
 .ep-row input[type="checkbox"] { accent-color: ${COLORS.primary}; width: 16px; height: 16px; cursor: pointer; }
 .ep-row .actions { display: flex; gap: 0.35rem; margin-left: auto; flex-shrink: 0; }
 .test-indicator { font-size: 0.75rem; min-width: 60px; text-align: center; }
@@ -202,7 +203,8 @@ header .logout:hover { color: ${COLORS.primary}; }
 	background: ${COLORS.input}; color: ${COLORS.text}; outline: none;
 }
 .ep-row .edit-url { flex: 1; min-width: 100px; }
-.ep-row .edit-key { width: 160px; }
+.ep-row .edit-key { width: 120px; }
+.ep-row .edit-model { width: 100px; margin-left: 4px; }
 
 /* Logs Section */
 .logs-section { background: ${COLORS.card}; border-radius: 12px; padding: 1.25rem 1.5rem; margin-bottom: 1rem; scroll-margin-top: 1rem; }
@@ -546,6 +548,7 @@ function buildCard(name, endpoints) {
 		+ '<div class="add-form">'
 		+ '  <div class="field"><label>Base URL</label><input type="url" placeholder="https://..." data-url></div>'
 		+ '  <div class="field"><label>API Key</label><input type="text" placeholder="sk-..." data-key></div>'
+		+ '  <div class="field"><label>Model (optional)</label><input type="text" placeholder="e.g. gpt-4o..." data-model></div>'
 		+ '  <div class="field weight-field' + (currentStrategy !== 'weighted' ? ' hidden' : '') + '"><label>Weight</label><input type="number" min="1" max="100" value="1" data-weight></div>'
 		+ '  <button class="btn-sm btn-primary add-btn">Add</button>'
 		+ '</div>'
@@ -581,12 +584,14 @@ function buildCard(name, endpoints) {
 	card.querySelector('.add-btn').addEventListener('click', () => {
 		const url = card.querySelector('[data-url]').value.trim();
 		const key = card.querySelector('[data-key]').value.trim();
+		const model = card.querySelector('[data-model]').value.trim();
 		const weight = parseInt(card.querySelector('[data-weight]')?.value) || 1;
 		if (!url || !key) return;
 		providerData[name] = providerData[name] || [];
-		providerData[name].push({ baseUrl: url, apiKey: key, enabled: true, weight: Math.max(1, weight) });
+		providerData[name].push({ baseUrl: url, apiKey: key, enabled: true, weight: Math.max(1, weight), model: model || undefined });
 		card.querySelector('[data-url]').value = '';
 		card.querySelector('[data-key]').value = '';
+		card.querySelector('[data-model]').value = '';
 		if (card.querySelector('[data-weight]')) card.querySelector('[data-weight]').value = '1';
 		saveProvider(name);
 	});
@@ -607,10 +612,12 @@ function renderEndpoints(name, card, endpoints) {
 	endpoints.forEach((ep, i) => {
 		const row = document.createElement('div');
 		row.className = 'ep-row';
+		const modelDisplay = ep.model ? '<span class="mono model" title="Model: ' + esc(ep.model) + '">' + esc(ep.model.slice(0, 12)) + '</span>' : '';
 		row.innerHTML =
 			'<input type="checkbox"' + (ep.enabled ? ' checked' : '') + ' data-toggle>'
 			+ '<span class="mono url" title="' + esc(ep.baseUrl) + '">' + esc(mask(ep.baseUrl, 30)) + '</span>'
 			+ '<span class="mono key" title="API Key">' + esc(mask(ep.apiKey, 8)) + '</span>'
+			+ modelDisplay
 			+ '<span class="ep-weight-cell mono' + (isWeighted ? '' : ' hidden') + '" title="Weight">w:' + (ep.weight || 1) + '</span>'
 			+ '<span class="test-indicator" data-ti></span>'
 			+ '<div class="actions">'
@@ -654,6 +661,7 @@ function renderEndpoints(name, card, endpoints) {
 		row.querySelector('.edit-btn').addEventListener('click', () => {
 			const urlSpan = row.querySelector('.url');
 			const keySpan = row.querySelector('.key');
+			const modelSpan = row.querySelector('.model');
 			const weightSpan = row.querySelector('.ep-weight-cell');
 			const actionsDiv = row.querySelector('.actions');
 
@@ -668,6 +676,18 @@ function renderEndpoints(name, card, endpoints) {
 			keyInput.className = 'edit-input edit-key';
 			keyInput.value = ep.apiKey;
 			keySpan.replaceWith(keyInput);
+
+			const modelInput = document.createElement('input');
+			modelInput.type = 'text';
+			modelInput.className = 'edit-input edit-model';
+			modelInput.placeholder = 'Model (optional)';
+			modelInput.value = ep.model || '';
+			if (modelSpan) {
+				modelSpan.replaceWith(modelInput);
+			} else {
+				// Insert after keyInput if no model span exists
+				keyInput.after(modelInput);
+			}
 
 			if (weightSpan) {
 				const weightInput = document.createElement('input');
@@ -686,9 +706,11 @@ function renderEndpoints(name, card, endpoints) {
 			actionsDiv.querySelector('.save-btn').addEventListener('click', () => {
 				const newUrl = urlInput.value.trim();
 				const newKey = keyInput.value.trim();
+				const newModel = modelInput.value.trim();
 				if (!newUrl || !newKey) return;
 				providerData[name][i].baseUrl = newUrl;
 				providerData[name][i].apiKey = newKey;
+				providerData[name][i].model = newModel || undefined;
 				const wInput = row.querySelector('.edit-weight');
 				if (wInput) providerData[name][i].weight = Math.max(1, parseInt(wInput.value) || 1);
 				saveProvider(name);
@@ -720,7 +742,7 @@ async function testOne(provider, ep, indicator) {
 	try {
 		const r = await api('/test', {
 			method: 'POST',
-			body: JSON.stringify({ provider, baseUrl: ep.baseUrl, apiKey: ep.apiKey }),
+			body: JSON.stringify({ provider, baseUrl: ep.baseUrl, apiKey: ep.apiKey, model: ep.model }),
 		});
 		const ms = Math.round(performance.now() - start);
 		if (!r) return;

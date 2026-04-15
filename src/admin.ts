@@ -148,7 +148,7 @@ async function checkJsonBodyError(resp: Response, duration: number): Promise<Tes
 	return { success: true, duration, status: 200 };
 }
 
-async function runTest(provider: string, baseUrl: string, apiKey: string): Promise<TestResult> {
+async function runTest(provider: string, baseUrl: string, apiKey: string, model?: string): Promise<TestResult> {
 	const start = Date.now();
 	try {
 		let resp: Response;
@@ -180,7 +180,7 @@ async function runTest(provider: string, baseUrl: string, apiKey: string): Promi
 						"x-stainless-timeout": "600",
 					},
 					body: JSON.stringify({
-						model: "claude-opus-4-6",
+						model: model || "claude-opus-4-6",
 						messages: [{ role: "user", content: [{ type: "text", text: "say hi", cache_control: { type: "ephemeral" } }] }],
 						system: [
 							{ type: "text", text: "x-anthropic-billing-header: cc_version=2.1.79.04b; cc_entrypoint=cli; cch=00000;" },
@@ -220,7 +220,7 @@ async function runTest(provider: string, baseUrl: string, apiKey: string): Promi
 						"Content-Type": "application/json",
 					},
 					body: JSON.stringify({
-						model: "gpt-4o-mini",
+						model: model || "gpt-4o-mini",
 						messages: [{ role: "user", content: "hi" }],
 						max_tokens: 5,
 					}),
@@ -241,7 +241,7 @@ async function runTest(provider: string, baseUrl: string, apiKey: string): Promi
 						"Content-Type": "application/json",
 					},
 					body: JSON.stringify({
-						model: "grok-3-mini-fast",
+						model: model || "grok-3-mini-fast",
 						messages: [{ role: "user", content: "hi" }],
 						max_tokens: 5,
 					}),
@@ -255,7 +255,7 @@ async function runTest(provider: string, baseUrl: string, apiKey: string): Promi
 			}
 
 			case "gemini": {
-				resp = await fetch(`${base}/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`, {
+				resp = await fetch(`${base}/v1beta/models/${model || "gemini-2.0-flash"}:generateContent?key=${apiKey}`, {
 					method: "POST",
 					headers: { "Content-Type": "application/json" },
 					body: JSON.stringify({
@@ -285,12 +285,12 @@ async function runTest(provider: string, baseUrl: string, apiKey: string): Promi
 async function testEndpoint(request: Request, _env: Env): Promise<Response> {
 	if (request.method !== "POST") return json({ error: "Method not allowed" }, 405);
 
-	const body = await request.json<{ provider?: string; baseUrl?: string; apiKey?: string }>();
+	const body = await request.json<{ provider?: string; baseUrl?: string; apiKey?: string; model?: string }>();
 	if (!body.provider || !body.baseUrl || !body.apiKey) {
 		return json({ error: "provider, baseUrl, and apiKey are required" }, 400);
 	}
 
-	const result = await runTest(body.provider, body.baseUrl, body.apiKey);
+	const result = await runTest(body.provider, body.baseUrl, body.apiKey, body.model);
 	return json(result);
 }
 
@@ -315,7 +315,7 @@ async function testBatch(request: Request, env: Env): Promise<Response> {
 
 	const results = await Promise.all(
 		enabledEndpoints.map(async (ep) => {
-			const result = await runTest(body.provider!, ep.baseUrl, ep.apiKey);
+			const result = await runTest(body.provider!, ep.baseUrl, ep.apiKey, ep.model);
 			return { baseUrl: ep.baseUrl, ...result };
 		}),
 	);

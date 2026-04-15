@@ -268,13 +268,6 @@ async function handleProxy(
 		// bodyText = JSON.stringify(requestBody);
 	}
 
-	// Override model if endpoint has a model specified
-	const endpointModel = selection.endpoint.model?.trim();
-	if (endpointModel && requestBody && typeof requestBody === "object" && "model" in requestBody) {
-		requestBody.model = endpointModel;
-		bodyText = JSON.stringify(requestBody);
-	}
-
 	// Log request
 	const requestLogData: RequestLogData = {
 		timestamp: new Date().toISOString(),
@@ -294,7 +287,8 @@ async function handleProxy(
 	// For failover-on-error: try up to N endpoints
 	const maxAttempts = strategy === "failover-on-error" ? enabled.length : 1;
 
-	let BASE_DELAY_MS = 2000;  
+	let BASE_DELAY_MS = 5000; 
+	let rounds = 3; // 可按需配置 
 
 
 	for (let attempt = 0; attempt < maxAttempts; attempt++) {
@@ -315,14 +309,19 @@ async function handleProxy(
 			const shouldRetry = strategy === "failover-on-error"
 				&& (upstream.status >= 400)
 				// && (upstream.status >= 500 || upstream.status === 429 || upstream.status === 403)
-				&& attempt < maxAttempts - 1;
+				;
 
 			if (shouldRetry) {
 				console.log(`[${provider}] Key ${maskKey(currentEndpoint.apiKey)} returned ${upstream.status}, advancing...`);
 				await scheduler.wait(BASE_DELAY_MS);
 				const nextIdx = advanceStickyIndex(provider, enabled.length);
 				currentEndpoint = enabled[nextIdx]; 
-				continue;
+				if(attempt==maxAttempts-1){
+					rounds -= 1;
+					if(rounds>0)
+						attempt = 0;
+				}
+				if(attempt < maxAttempts - 1) continue;
 			}
 
 			// Success or final attempt — log and return
