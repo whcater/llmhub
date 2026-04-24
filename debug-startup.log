@@ -1,0 +1,19 @@
+[STARTUP] Ink root created
+[STARTUP] Before showSetupScreens
+[SETUP] showSetupScreens started
+[SETUP] config.theme=dark, hasCompletedOnboarding=true
+[SETUP] Checking trust... accepted=true
+[STARTUP] After showSetupScreens
+[STARTUP] Checking orgValidation...
+[STARTUP] orgValidation.valid=true
+[STARTUP] process.exitCode=undefined
+[STARTUP] Past exitCode check
+[STARTUP] LSP initialized
+[STARTUP] Settings errors: 0
+[STARTUP] Launching REPL
+[REPL-LAUNCH] Importing App...
+[REPL-LAUNCH] App imported. Importing REPL...
+[REPL-LAUNCH] REPL imported. Calling renderAndRun...
+[REPL] Before root.render()
+[REPL] After root.render() - OK
+[REPL] Waiting for exit...
