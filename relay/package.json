@@ -1,0 +1,13 @@
+{
+  "name": "poc-proxy-relay",
+  "version": "1.0.0",
+  "description": "TCP port relay - expose localhost proxy to LAN devices",
+  "main": "src/relay.ts",
+  "scripts": {
+    "start": "npx tsx src/relay.ts",
+    "dev": "npx cross-env HTTP_PROXY=http://127.0.0.1:15715 HTTPS_PROXY=http://127.0.0.1:15715 GLOBAL_AGENT_HTTP_PROXY=http://127.0.0.1:15715 npx tsx --watch src/relay.ts"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0"
+  }
+}

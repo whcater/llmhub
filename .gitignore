@@ -7,6 +7,7 @@ temp/
 .env
 dist/
 logs/
+debug-startup.log
 .idea/*
-package-lock.json
+/package-lock.json
 wrangler.toml
