@@ -12,6 +12,23 @@ const TARGET_HOST = process.env.TARGET_HOST || "llmhub.cater-wh.workers.dev";
 const TARGET_PORT = parseInt(process.env.TARGET_PORT || "443", 10);
 const PROXY_HOST = process.env.PROXY_HOST || "127.0.0.1";
 const PROXY_PORT = parseInt(process.env.PROXY_PORT || "15715", 10);
+// ─── Retry config ────────────────────────────────────────────────
+const MAX_RETRIES = 10;
+const RETRY_DELAY_MS = 150;
+const RETRYABLE_ERRORS = [
+  "Client network socket disconnected before secure TLS connection was established",
+  "socket hang up",
+  "ECONNRESET",
+  "Error",
+];
+
+function isRetryable(err: Error): boolean {
+  return RETRYABLE_ERRORS.some((msg) => err.message.includes(msg));
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 // ─── Stats ───────────────────────────────────────────────────────
 let activeConnections = 0;
@@ -108,30 +125,61 @@ const server = http.createServer((req, res) => {
 
   console.log(`[${ts()}] [>] ${req.method} ${reqPath}  (from ${clientAddr})`);
 
+  // ── 收集 body，重试时可以复用 ──────────────────────────────────
+  const bodyChunks: Buffer[] = [];
+  req.on("data", (chunk: Buffer) => {
+    totalBytesUp += chunk.length;
+    bodyChunks.push(chunk);
+  });
+
+  req.on("end", () => {
+    const body = Buffer.concat(bodyChunks);
+    attemptRequest(req, res, reqPath, body, 0);
+  });
+});
+
+function attemptRequest(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  reqPath: string,
+  body: Buffer,
+  attempt: number
+): void {
   connectThroughProxy(TARGET_HOST, TARGET_PORT)
     .then((rawSocket) => {
-      // ── TLS handshake on top of the CONNECT tunnel ──
       const tlsSocket = tls.connect({
         socket: rawSocket,
         servername: TARGET_HOST,
         rejectUnauthorized: true,
       });
 
+      let tlsErrored = false;
+
       tlsSocket.once("error", (err) => {
-        console.error(`[${ts()}] [!] TLS error: ${err.message}`);
-        if (!res.headersSent) { res.writeHead(502); res.end(err.message); }
+        tlsErrored = true;
+        if (attempt < MAX_RETRIES && isRetryable(err)) {
+          console.warn(
+            `[${ts()}] [~] TLS error (attempt ${attempt + 1}/${MAX_RETRIES}), retrying in ${RETRY_DELAY_MS}ms... — ${err.message}`
+          );
+          delay(RETRY_DELAY_MS).then(() =>
+            attemptRequest(req, res, reqPath, body, attempt + 1)
+          );
+        } else {
+          console.error(`[${ts()}] [!] TLS error (给up): ${err.message}`);
+          if (!res.headersSent) { res.writeHead(502); res.end(err.message); }
+        }
       });
 
-      // ── Build forwarded headers ──
       const headers: http.OutgoingHttpHeaders = { ...req.headers };
       headers["host"] = TARGET_HOST;
+      headers["content-length"] = body.length;
       delete headers["proxy-connection"];
       delete headers["proxy-authorization"];
+      delete headers["transfer-encoding"];
 
-      // ── Forward the request as HTTPS ──
       const proxyReq = https.request(
         {
-          createConnection: () => tlsSocket,   // reuse tunneled socket
+          createConnection: () => tlsSocket,
           hostname: TARGET_HOST,
           port: TARGET_PORT,
           path: reqPath,
@@ -139,11 +187,13 @@ const server = http.createServer((req, res) => {
           headers,
         },
         (proxyRes) => {
+          if (attempt > 0) {
+            console.log(`[${ts()}] [✓] Retry succeeded on attempt ${attempt + 1}`);
+          }
           console.log(`[${ts()}] [<] ${req.method} ${reqPath} → ${proxyRes.statusCode}`);
 
           proxyRes.on("data", (chunk: Buffer) => { totalBytesDown += chunk.length; });
 
-          // strip hop-by-hop headers before forwarding
           const resHeaders = { ...proxyRes.headers };
           for (const h of ["transfer-encoding", "connection", "keep-alive", "upgrade"]) {
             delete resHeaders[h];
@@ -154,19 +204,39 @@ const server = http.createServer((req, res) => {
         }
       );
 
-      proxyReq.on("error", (err) => {
-        console.error(`[${ts()}] [!] Request error: ${err.message}`);
-        if (!res.headersSent) { res.writeHead(502); res.end(err.message); }
+      proxyReq.once("error", (err) => {
+        if (tlsErrored) return; // TLS 层已经在处理，不重复触发
+        if (attempt < MAX_RETRIES && isRetryable(err)) {
+          console.warn(
+            `[${ts()}] [~] Request error (attempt ${attempt + 1}/${MAX_RETRIES}), retrying in ${RETRY_DELAY_MS}ms... — ${err.message}`
+          );
+          delay(RETRY_DELAY_MS).then(() =>
+            attemptRequest(req, res, reqPath, body, attempt + 1)
+          );
+        } else {
+          console.error(`[${ts()}] [!] Request error (给up): ${err.message}`);
+          if (!res.headersSent) { res.writeHead(502); res.end(err.message); }
+        }
       });
 
-      req.on("data", (chunk: Buffer) => { totalBytesUp += chunk.length; });
-      req.pipe(proxyReq, { end: true });
+      // 直接写入已缓冲的 body，不再 pipe req
+      if (body.length > 0) proxyReq.write(body);
+      proxyReq.end();
     })
     .catch((err) => {
-      console.error(`[${ts()}] [!] Proxy tunnel error: ${err.message}`);
-      if (!res.headersSent) { res.writeHead(502); res.end(err.message); }
+      if (attempt < MAX_RETRIES && isRetryable(err)) {
+        console.warn(
+          `[${ts()}] [~] Tunnel error (attempt ${attempt + 1}/${MAX_RETRIES}), retrying... — ${err.message}`
+        );
+        delay(RETRY_DELAY_MS).then(() =>
+          attemptRequest(req, res, reqPath, body, attempt + 1)
+        );
+      } else {
+        console.error(`[${ts()}] [!] Proxy tunnel error (给up): ${err.message}`);
+        if (!res.headersSent) { res.writeHead(502); res.end(err.message); }
+      }
     });
-});
+}
 
 server.on("error", (err: NodeJS.ErrnoException) => {
   if (err.code === "EADDRINUSE") {
