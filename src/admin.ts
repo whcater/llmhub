@@ -87,13 +87,36 @@ async function token(request: Request, env: Env): Promise<Response> {
 
 async function listProviders(request: Request, env: Env): Promise<Response> {
 	if (request.method !== "GET") return json({ error: "Method not allowed" }, 405);
+	return json({ providers: await loadAllProviders(env) });
+}
 
-	const providers: Record<string, ProviderConfig | null> = {};
-	for (const name of SUPPORTED_PROVIDERS) {
-		const raw = await env.LLMHUB_KV.get(`provider:${name}`);
-		providers[name] = raw ? JSON.parse(raw) : null;
+async function exportProviders(request: Request, env: Env): Promise<Response> {
+	if (request.method !== "GET") return json({ error: "Method not allowed" }, 405);
+	return json({ providers: await loadAllProviders(env) });
+}
+
+async function importProviders(request: Request, env: Env): Promise<Response> {
+	if (request.method !== "POST") return json({ error: "Method not allowed" }, 405);
+
+	const body = await request.json<{ providers?: Record<string, unknown> }>();
+	if (!body.providers || typeof body.providers !== "object") {
+		return json({ error: "Invalid payload: providers object required" }, 400);
 	}
-	return json({ providers });
+
+	for (const name of SUPPORTED_PROVIDERS) {
+		const rawConfig = body.providers[name];
+		if (rawConfig == null) {
+			await env.LLMHUB_KV.delete(`provider:${name}`);
+			continue;
+		}
+		const config = sanitizeProviderConfig(rawConfig);
+		if (!config) {
+			return json({ error: `Invalid provider config: ${name}` }, 400);
+		}
+		await env.LLMHUB_KV.put(`provider:${name}`, JSON.stringify(config));
+	}
+
+	return json({ ok: true, providers: await loadAllProviders(env) });
 }
 
 async function updateProvider(
@@ -107,8 +130,8 @@ async function updateProvider(
 		return json({ error: `Unsupported provider: ${name}` }, 400);
 	}
 
-	const body = await request.json<ProviderConfig>();
-	if (!Array.isArray(body.endpoints)) {
+	const body = sanitizeProviderConfig(await request.json<ProviderConfig>());
+	if (!body) {
 		return json({ error: "Invalid payload: endpoints array required" }, 400);
 	}
 
@@ -116,6 +139,44 @@ async function updateProvider(
 	return json({ ok: true, provider: name });
 }
 
+type ProviderConfigMap = Partial<Record<ProviderName, ProviderConfig>>;
+
+function sanitizeEndpoint(endpoint: unknown) {
+	if (!endpoint || typeof endpoint !== "object") return null;
+	const value = endpoint as Record<string, unknown>;
+	if (typeof value.baseUrl !== "string" || typeof value.apiKey !== "string" || typeof value.enabled !== "boolean") {
+		return null;
+	}
+	return {
+		baseUrl: value.baseUrl,
+		apiKey: value.apiKey,
+		enabled: value.enabled,
+		weight: typeof value.weight === "number" ? value.weight : undefined,
+		model: typeof value.model === "string" ? value.model : undefined,
+		note: typeof value.note === "string" ? value.note : undefined,
+	};
+}
+
+function sanitizeProviderConfig(config: unknown): ProviderConfig | null {
+	if (!config || typeof config !== "object") return null;
+	const value = config as Record<string, unknown>;
+	if (!Array.isArray(value.endpoints)) return null;
+	const endpoints = value.endpoints.map(sanitizeEndpoint);
+	if (endpoints.some((ep) => ep === null)) return null;
+	return {
+		endpoints: endpoints as ProviderConfig["endpoints"],
+		strategy: typeof value.strategy === "string" ? value.strategy as ProviderConfig["strategy"] : undefined,
+	};
+}
+
+async function loadAllProviders(env: Env): Promise<ProviderConfigMap> {
+	const providers: ProviderConfigMap = {};
+	for (const name of SUPPORTED_PROVIDERS) {
+		const raw = await env.LLMHUB_KV.get(`provider:${name}`);
+		providers[name] = raw ? JSON.parse(raw) : null;
+	}
+	return providers;
+}
 interface TestResult {
 	success: boolean;
 	duration: number;
@@ -372,6 +433,24 @@ async function listLogFiles(request: Request, env: Env, folder: string): Promise
 	return json({ folder, files });
 }
 
+async function logsConfig(request: Request, env: Env): Promise<Response> {
+	if (request.method === "GET") {
+		const enabled = (await env.LLMHUB_KV.get("logs_enabled")) === "true";
+		return json({ enabled });
+	}
+
+	if (request.method === "POST") {
+		const body = await request.json<{ enabled?: boolean }>();
+		if (typeof body.enabled !== "boolean") {
+			return json({ error: "enabled must be boolean" }, 400);
+		}
+		await env.LLMHUB_KV.put("logs_enabled", body.enabled ? "true" : "false");
+		return json({ ok: true, enabled: body.enabled });
+	}
+
+	return json({ error: "Method not allowed" }, 405);
+}
+
 async function cleanupLogs(request: Request, env: Env): Promise<Response> {
 	if (request.method !== "POST") return json({ error: "Method not allowed" }, 405);
 
@@ -380,6 +459,7 @@ async function cleanupLogs(request: Request, env: Env): Promise<Response> {
 	const deleted = await cleanupOldLogs(env.LLMHUB_KV, days);
 	return json({ ok: true, deleted, retentionDays: days });
 }
+
 
 async function getLogContent(request: Request, env: Env): Promise<Response> {
 	if (request.method !== "GET") return json({ error: "Method not allowed" }, 405);
@@ -416,10 +496,13 @@ export async function handleAdmin(request: Request, env: Env, path: string): Pro
 		if (path === "/admin/api/session") return session(request, env);
 		if (path === "/admin/api/token") return token(request, env);
 		if (path === "/admin/api/providers") return listProviders(request, env);
+		if (path === "/admin/api/providers/export") return exportProviders(request, env);
+		if (path === "/admin/api/providers/import") return importProviders(request, env);
 		if (path === "/admin/api/test") return testEndpoint(request, env);
 		if (path === "/admin/api/test-batch") return testBatch(request, env);
 		if (path === "/admin/api/change-password") return changePassword(request, env);
 		if (path === "/admin/api/logs") return listLogFolders(request, env);
+		if (path === "/admin/api/logs/config") return logsConfig(request, env);
 		if (path === "/admin/api/logs/cleanup") return cleanupLogs(request, env);
 		if (path === "/admin/api/log-content") return getLogContent(request, env);
 

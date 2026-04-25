@@ -176,12 +176,17 @@ header .logout:hover { color: ${COLORS.primary}; }
 .ep-row .url { flex: 1; min-width: 100px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ep-row .key { width: 100px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ep-row .model { width: 100px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #e94560; font-size: 0.75rem; }
+.ep-row .note { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: ${COLORS.text}; font-size: 0.75rem; }
 .ep-row input[type="checkbox"] { accent-color: ${COLORS.primary}; width: 16px; height: 16px; cursor: pointer; }
 .ep-row .actions { display: flex; gap: 0.35rem; margin-left: auto; flex-shrink: 0; }
 .test-indicator { font-size: 0.75rem; min-width: 60px; text-align: center; }
 .test-indicator.ok { color: ${COLORS.success}; }
 .test-indicator.fail { color: ${COLORS.error}; }
 .test-indicator.loading { color: ${COLORS.textDim}; }
+
+/* Config import/export */
+.config-tools { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.75rem; }
+.config-tools input[type="file"] { display: none; }
 
 .batch-bar { display: flex; gap: 0.5rem; align-items: center; margin-top: 0.5rem; }
 .no-ep { color: ${COLORS.textDim}; font-size: 0.8rem; font-style: italic; padding: 0.5rem 0; }
@@ -339,6 +344,7 @@ header .logout:hover { color: ${COLORS.primary}; }
 		<a href="#openai">OpenAI</a>
 		<a href="#gemini">Gemini</a>
 		<a href="#grok">Grok</a>
+		<a href="#config-tools">Config</a>
 		<a href="#logs">Logs</a>
 		<a href="#commands">Commands</a>
 	</nav>
@@ -379,11 +385,24 @@ header .logout:hover { color: ${COLORS.primary}; }
 
 	<!-- Provider Cards -->
 	<div id="providers"></div>
+	<div class="section" id="config-tools">
+		<h2>Config Import / Export</h2>
+		<div class="config-tools">
+			<button class="btn-sm btn-outline" id="exportProviders">Export Config</button>
+			<label class="btn-sm btn-primary" for="importProvidersFile">Import Config</label>
+			<input type="file" id="importProvidersFile" accept="application/json">
+		</div>
+		<div class="msg" id="configMsg"></div>
+	</div>
 
 	<!-- Logs Section -->
 	<div class="logs-section" id="logs">
 		<h2>Request/Response Logs</h2>
 		<div class="logs-controls">
+			<label class="auto-refresh">
+				<input type="checkbox" id="logsEnabled">
+				<span>Enable logging</span>
+			</label>
 			<select id="logFolder">
 				<option value="">Select time period...</option>
 			</select>
@@ -395,6 +414,7 @@ header .logout:hover { color: ${COLORS.primary}; }
 			<button class="btn-sm btn-outline" id="browseAll">Browse All</button>
 			<button class="btn-sm btn-danger" id="cleanupLogs">Clean Up (1d+)</button>
 		</div>
+		<div class="msg" id="logsMsg"></div>
 		<div class="log-list" id="logList"></div>
 		<div class="log-viewer" id="logViewer">
 			<div class="log-empty">Select a log file to view</div>
@@ -426,10 +446,11 @@ async function api(path, opts = {}) {
 	return res;
 }
 
-function mask(s, show = 6) {
+function mask(s, show = 6, tail = 0) {
 	if (!s) return '';
-	if (s.length <= show) return s;
-	return s.slice(0, show) + '\u2022'.repeat(Math.min(s.length - show, 20));
+	if (s.length <= show + tail) return s;
+	const end = tail > 0 ? s.slice(-tail) : '';
+	return s.slice(0, show) + '\u2022'.repeat(Math.min(s.length - show - tail, 20)) + end;
 }
 
 document.addEventListener('click', () => {
@@ -446,6 +467,7 @@ document.addEventListener('click', () => {
 async function init() {
 	await loadToken();
 	await loadProviders();
+	await loadLogsConfig();
 	await loadLogFolders();
 	renderQuickCommands();
 }
@@ -459,12 +481,14 @@ async function loadToken() {
 	const r = await api('/token');
 	if (!r) return;
 	const d = await r.json();
-	tokenVal.textContent = d.token || '(not set)';
+	const token = d.token || '';
+	tokenVal.textContent = token ? mask(token, 6, 4) : '(not set)';
+	tokenVal.dataset.token = token;
 }
 
 copyBtn.addEventListener('click', () => {
-	const t = tokenVal.textContent;
-	if (!t || t === '(not set)') return;
+	const t = tokenVal.dataset.token || '';
+	if (!t) return;
 	navigator.clipboard.writeText(t).then(() => {
 		copyBtn.textContent = 'Copied!';
 		setTimeout(() => copyBtn.textContent = 'Copy', 1500);
@@ -475,7 +499,7 @@ genBtn.addEventListener('click', async () => {
 	if (!confirm('Generate a new access token? Existing clients will need the new token.')) return;
 	genBtn.disabled = true;
 	const r = await api('/token', { method: 'POST' });
-	if (r) { const d = await r.json(); tokenVal.textContent = d.token; }
+	if (r) { const d = await r.json(); const token = d.token || ''; tokenVal.textContent = token ? mask(token, 6, 4) : '(not set)'; tokenVal.dataset.token = token; }
 	genBtn.disabled = false;
 	renderQuickCommands();
 });
@@ -549,6 +573,7 @@ function buildCard(name, endpoints) {
 		+ '  <div class="field"><label>Base URL</label><input type="url" placeholder="https://..." data-url></div>'
 		+ '  <div class="field"><label>API Key</label><input type="text" placeholder="sk-..." data-key></div>'
 		+ '  <div class="field"><label>Model (optional)</label><input type="text" placeholder="e.g. gpt-4o..." data-model></div>'
+		+ '  <div class="field"><label>Note</label><input type="text" placeholder="desc" data-note></div>'
 		+ '  <div class="field weight-field' + (currentStrategy !== 'weighted' ? ' hidden' : '') + '"><label>Weight</label><input type="number" min="1" max="100" value="1" data-weight></div>'
 		+ '  <button class="btn-sm btn-primary add-btn">Add</button>'
 		+ '</div>'
@@ -585,13 +610,15 @@ function buildCard(name, endpoints) {
 		const url = card.querySelector('[data-url]').value.trim();
 		const key = card.querySelector('[data-key]').value.trim();
 		const model = card.querySelector('[data-model]').value.trim();
+		const note = card.querySelector('[data-note]').value.trim();
 		const weight = parseInt(card.querySelector('[data-weight]')?.value) || 1;
 		if (!url || !key) return;
 		providerData[name] = providerData[name] || [];
-		providerData[name].push({ baseUrl: url, apiKey: key, enabled: true, weight: Math.max(1, weight), model: model || undefined });
+		providerData[name].push({ baseUrl: url, apiKey: key, enabled: true, weight: Math.max(1, weight), model: model || undefined, note: note || undefined });
 		card.querySelector('[data-url]').value = '';
 		card.querySelector('[data-key]').value = '';
 		card.querySelector('[data-model]').value = '';
+		card.querySelector('[data-note]').value = '';
 		if (card.querySelector('[data-weight]')) card.querySelector('[data-weight]').value = '1';
 		saveProvider(name);
 	});
@@ -613,11 +640,13 @@ function renderEndpoints(name, card, endpoints) {
 		const row = document.createElement('div');
 		row.className = 'ep-row';
 		const modelDisplay = ep.model ? '<span class="mono model" title="Model: ' + esc(ep.model) + '">' + esc(ep.model.slice(0, 12)) + '</span>' : '';
+		const noteDisplay = ep.note ? '<span class="note" title="' + esc(ep.note) + '">' + esc(ep.note) + '</span>' : '';
 		row.innerHTML =
 			'<input type="checkbox"' + (ep.enabled ? ' checked' : '') + ' data-toggle>'
 			+ '<span class="mono url" title="' + esc(ep.baseUrl) + '">' + esc(mask(ep.baseUrl, 30)) + '</span>'
 			+ '<span class="mono key" title="API Key">' + esc(mask(ep.apiKey, 8)) + '</span>'
 			+ modelDisplay
+			+ noteDisplay
 			+ '<span class="ep-weight-cell mono' + (isWeighted ? '' : ' hidden') + '" title="Weight">w:' + (ep.weight || 1) + '</span>'
 			+ '<span class="test-indicator" data-ti></span>'
 			+ '<div class="actions">'
@@ -662,6 +691,7 @@ function renderEndpoints(name, card, endpoints) {
 			const urlSpan = row.querySelector('.url');
 			const keySpan = row.querySelector('.key');
 			const modelSpan = row.querySelector('.model');
+			const noteSpan = row.querySelector('.note');
 			const weightSpan = row.querySelector('.ep-weight-cell');
 			const actionsDiv = row.querySelector('.actions');
 
@@ -685,8 +715,18 @@ function renderEndpoints(name, card, endpoints) {
 			if (modelSpan) {
 				modelSpan.replaceWith(modelInput);
 			} else {
-				// Insert after keyInput if no model span exists
 				keyInput.after(modelInput);
+			}
+
+			const noteInput = document.createElement('input');
+			noteInput.type = 'text';
+			noteInput.className = 'edit-input edit-model';
+			noteInput.placeholder = 'Note';
+			noteInput.value = ep.note || '';
+			if (noteSpan) {
+				noteSpan.replaceWith(noteInput);
+			} else {
+				modelInput.after(noteInput);
 			}
 
 			if (weightSpan) {
@@ -707,10 +747,12 @@ function renderEndpoints(name, card, endpoints) {
 				const newUrl = urlInput.value.trim();
 				const newKey = keyInput.value.trim();
 				const newModel = modelInput.value.trim();
+				const newNote = noteInput.value.trim();
 				if (!newUrl || !newKey) return;
 				providerData[name][i].baseUrl = newUrl;
 				providerData[name][i].apiKey = newKey;
 				providerData[name][i].model = newModel || undefined;
+				providerData[name][i].note = newNote || undefined;
 				const wInput = row.querySelector('.edit-weight');
 				if (wInput) providerData[name][i].weight = Math.max(1, parseInt(wInput.value) || 1);
 				saveProvider(name);
@@ -727,6 +769,61 @@ function renderEndpoints(name, card, endpoints) {
 
 function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 
+function downloadJson(filename, data) {
+	const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+	const url = URL.createObjectURL(blob);
+	const a = document.createElement('a');
+	a.href = url;
+	a.download = filename;
+	document.body.appendChild(a);
+	a.click();
+	a.remove();
+	URL.revokeObjectURL(url);
+}
+
+function setConfigMessage(text, ok) {
+	const msg = document.getElementById('configMsg');
+	msg.textContent = text || '';
+	msg.className = 'msg' + (text ? (ok ? ' ok' : ' fail') : '');
+}
+
+async function exportAllProviders() {
+	setConfigMessage('');
+	const r = await api('/providers/export');
+	if (!r) return;
+	const data = await r.json();
+	downloadJson('llmhub-providers.json', data);
+	setConfigMessage('Config exported', true);
+}
+
+async function importAllProviders(file) {
+	setConfigMessage('');
+	try {
+		const text = await file.text();
+		const payload = JSON.parse(text);
+		const r = await api('/providers/import', {
+			method: 'POST',
+			body: JSON.stringify(payload),
+		});
+		if (!r) return;
+		const data = await r.json();
+		if (!r.ok) {
+			setConfigMessage(data.error || 'Import failed', false);
+			return;
+		}
+		providerData = {};
+		providerStrategy = {};
+		for (const [name, cfg] of Object.entries(data.providers || {})) {
+			providerData[name] = cfg ? cfg.endpoints : [];
+			providerStrategy[name] = cfg ? (cfg.strategy || 'failover-on-error') : 'failover-on-error';
+		}
+		renderProviders();
+		setConfigMessage('Config imported', true);
+	} catch {
+		setConfigMessage('Invalid JSON file', false);
+	}
+}
+
 async function saveProvider(name) {
 	await api('/providers/' + name, {
 		method: 'POST',
@@ -734,6 +831,14 @@ async function saveProvider(name) {
 	});
 	renderProviders();
 }
+
+document.getElementById('exportProviders').addEventListener('click', exportAllProviders);
+document.getElementById('importProvidersFile').addEventListener('change', async (e) => {
+	const file = e.target.files?.[0];
+	if (!file) return;
+	await importAllProviders(file);
+	e.target.value = '';
+});
 
 async function testOne(provider, ep, indicator) {
 	indicator.textContent = '...';
@@ -883,6 +988,8 @@ const logViewer = document.getElementById('logViewer');
 const logFullscreen = document.getElementById('logFullscreen');
 const logViewerFullscreen = document.getElementById('logViewerFullscreen');
 const autoRefreshCheckbox = document.getElementById('autoRefresh');
+const logsEnabledCheckbox = document.getElementById('logsEnabled');
+const logsMsg = document.getElementById('logsMsg');
 const browseAllBtn = document.getElementById('browseAll');
 let currentFiles = [];
 let selectedLogKey = null;
@@ -891,6 +998,35 @@ let currentLogIndex = 0;
 let allLogs = [];
 let isFullscreen = false;
 let currentLogData = null;
+
+function setLogsMessage(text, ok) {
+	logsMsg.textContent = text || '';
+	logsMsg.className = 'msg' + (text ? (ok ? ' ok' : ' fail') : '');
+}
+
+async function loadLogsConfig() {
+	const r = await api('/logs/config');
+	if (!r) return;
+	const d = await r.json();
+	logsEnabledCheckbox.checked = !!d.enabled;
+}
+
+logsEnabledCheckbox.addEventListener('change', async () => {
+	setLogsMessage('');
+	const enabled = logsEnabledCheckbox.checked;
+	const r = await api('/logs/config', {
+		method: 'POST',
+		body: JSON.stringify({ enabled }),
+	});
+	if (!r) return;
+	const d = await r.json();
+	if (!r.ok) {
+		logsEnabledCheckbox.checked = !enabled;
+		setLogsMessage(d.error || 'Failed to update logging', false);
+		return;
+	}
+	setLogsMessage(enabled ? 'Logging enabled' : 'Logging disabled', true);
+});
 
 async function loadLogFolders() {
 	const r = await api('/logs');
