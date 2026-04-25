@@ -11,3 +11,4 @@ debug-startup.log
 .idea/*
 /package-lock.json
 wrangler.toml
+.claude/
