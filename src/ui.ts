@@ -168,6 +168,16 @@ header .logout:hover { color: ${COLORS.primary}; }
 
 /* Endpoint list */
 .ep-list { display: flex; flex-direction: column; gap: 0.4rem; }
+.ep-header {
+	display: flex; align-items: center; gap: 0.5rem; padding: 0.25rem 0.65rem;
+	font-size: 0.7rem; font-weight: 600; color: ${COLORS.textDim}; text-transform: uppercase;
+}
+.ep-header input[type="checkbox"] { accent-color: ${COLORS.primary}; width: 16px; height: 16px; cursor: pointer; flex: 0 0 16px; }
+.ep-header .header-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ep-header .header-label:nth-child(2) { flex: 1 1 0; min-width: 0; }
+.ep-header .header-label:nth-child(3) { flex: 0 0 100px; width: 100px; }
+.ep-header .header-label:nth-child(4) { flex: 0 0 100px; width: 100px; }
+.ep-header .header-label:nth-child(5) { flex: 0 0 220px; width: 180px; }
 .ep-row {
 	display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 0.65rem; border-radius: 8px;
 	background: ${COLORS.input}; border: 1px solid ${COLORS.border}; flex-wrap: wrap;
@@ -340,11 +350,11 @@ header .logout:hover { color: ${COLORS.primary}; }
 	<nav>
 		<a href="#token">Access Token</a>
 		<a href="#password">Password</a>
+		<a href="#config-tools">Config</a>
 		<a href="#anthropic">Anthropic</a>
 		<a href="#openai">OpenAI</a>
 		<a href="#gemini">Gemini</a>
 		<a href="#grok">Grok</a>
-		<a href="#config-tools">Config</a>
 		<a href="#logs">Logs</a>
 		<a href="#commands">Commands</a>
 	</nav>
@@ -365,7 +375,7 @@ header .logout:hover { color: ${COLORS.primary}; }
 			<button class="btn-sm btn-primary" id="genToken">Generate New</button>
 		</div>
 	</div>
-
+ 
 	<!-- Password Section -->
 	<div class="section" id="password">
 		<h2>Change Admin Password</h2>
@@ -383,8 +393,6 @@ header .logout:hover { color: ${COLORS.primary}; }
 		<div class="msg" id="pwMsg"></div>
 	</div>
 
-	<!-- Provider Cards -->
-	<div id="providers"></div>
 	<div class="section" id="config-tools">
 		<h2>Config Import / Export</h2>
 		<div class="config-tools">
@@ -394,6 +402,9 @@ header .logout:hover { color: ${COLORS.primary}; }
 		</div>
 		<div class="msg" id="configMsg"></div>
 	</div>
+
+	<!-- Provider Cards -->
+	<div id="providers"></div>
 
 	<!-- Logs Section -->
 	<div class="logs-section" id="logs">
@@ -636,6 +647,27 @@ function renderEndpoints(name, card, endpoints) {
 	if (!endpoints.length) { list.innerHTML = '<div class="no-ep">No endpoints configured</div>'; return; }
 	const isWeighted = providerStrategy[name] === 'weighted';
 
+	// Header with select all checkbox
+	const header = document.createElement('div');
+	header.className = 'ep-header';
+	header.innerHTML =
+		'<input type="checkbox" data-select-all' + (endpoints.every(ep => ep.enabled) ? ' checked' : '') + '>'
+		+ '<span class="header-label">Base URL</span>'
+		+ '<span class="header-label">API Key</span>'
+		+ '<span class="header-label">Model</span>'
+		+ '<span class="header-label">Note</span>';
+	list.appendChild(header);
+
+	// Select all handler
+	header.querySelector('[data-select-all]').addEventListener('change', e => {
+		const checked = e.target.checked;
+		endpoints.forEach((ep, i) => {
+			providerData[name][i].enabled = checked;
+		});
+		saveProvider(name);
+		renderEndpoints(name, card, providerData[name] || []);
+	});
+
 	endpoints.forEach((ep, i) => {
 		const row = document.createElement('div');
 		row.className = 'ep-row';
@@ -659,6 +691,14 @@ function renderEndpoints(name, card, endpoints) {
 		row.querySelector('[data-toggle]').addEventListener('change', e => {
 			providerData[name][i].enabled = e.target.checked;
 			saveProvider(name);
+			// Update select all checkbox state
+			const selectAll = list.querySelector('[data-select-all]');
+			if (selectAll) {
+				const allEnabled = providerData[name].every(ep => ep.enabled);
+				const noneEnabled = providerData[name].every(ep => !ep.enabled);
+				selectAll.checked = allEnabled;
+				selectAll.indeterminate = !allEnabled && !noneEnabled;
+			}
 		});
 		row.querySelector('.del-btn').addEventListener('click', () => {
 			if (!confirm('Delete this endpoint?')) return;
