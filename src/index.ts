@@ -116,15 +116,17 @@ async function selectEndpoint(provider: ProviderName, env: Env): Promise<Endpoin
 	return { endpoint: selectByStrategy(enabled, strategy, provider), enabled, strategy };
 }
 
+
 function formatBytes(value: string | null): string {
 	const bytes = value ? parseInt(value, 10) : 0;
 	if (bytes === 0) return '0 B';
 	return `${(bytes/1024).toFixed(2)} KB`;
-	// const units = ['B', 'KB', 'MB', 'GB'];
-	// const i = Math.floor(Math.log(bytes) / Math.log(1024));
-	// return `${(bytes / Math.pow(1024, i)).toFixed(2)} ${units[i]}`;
 }
-// ── Proxy ────────────────────────────────────────────────────────────
+
+async function isLogsEnabled(env: Env): Promise<boolean> {
+	return (await env.LLMHUB_KV.get("logs_enabled")) === "true";
+}
+
 
 function buildUpstreamRequest(
 	request: Request,
@@ -238,6 +240,7 @@ async function handleProxy(
 	// Read request body once for reuse (logging + possible retries)
 	let requestBody: any = undefined;
 	let bodyText: string | undefined = undefined;
+	const logsEnabled = await isLogsEnabled(env);
 
 	if (request.body && request.method !== "GET" && request.method !== "HEAD") {
 		try {
@@ -275,18 +278,20 @@ async function handleProxy(
 		bodyText = JSON.stringify(requestBody);
 	}
 
-	// Log request
-	const requestLogData: RequestLogData = {
-		timestamp: new Date().toISOString(),
-		method: request.method,
-		path: new URL(request.url).pathname,
-		headers: Object.fromEntries(request.headers.entries()),
-		body: requestBody,
-		query: new URL(request.url).search,
-		ip: request.headers.get('cf-connecting-ip') || undefined,
-		userAgent: request.headers.get('user-agent') || undefined,
-	};
-	const requestId = await writeRequestLog(env.LLMHUB_KV, requestLogData);
+	let requestId = "";
+	if (logsEnabled) {
+		const requestLogData: RequestLogData = {
+			timestamp: new Date().toISOString(),
+			method: request.method,
+			path: new URL(request.url).pathname,
+			headers: Object.fromEntries(request.headers.entries()),
+			body: requestBody,
+			query: new URL(request.url).search,
+			ip: request.headers.get('cf-connecting-ip') || undefined,
+			userAgent: request.headers.get('user-agent') || undefined,
+		};
+		requestId = await writeRequestLog(env.LLMHUB_KV, requestLogData);
+	}
 
 	const { enabled, strategy } = selection;
 	let currentEndpoint = selection.endpoint;
@@ -331,15 +336,18 @@ async function handleProxy(
 			try { responseBody = await clonedResponse.json(); } catch { }
 			if(responseBody) console.log(responseBody);
 
-			const responseLogData: ResponseLogData = {
-				timestamp: new Date().toISOString(),
-				status: upstream.status,
-				responseTime,
-				body: responseBody,
-				headers: Object.fromEntries(upstream.headers.entries()),
-				requestId,
-			};
-			await writeResponseLog(env.LLMHUB_KV, responseLogData);
+			if (logsEnabled) {
+				const responseLogData: ResponseLogData = {
+					timestamp: new Date().toISOString(),
+					status: upstream.status,
+					responseTime,
+					body: responseBody,
+					headers: Object.fromEntries(upstream.headers.entries()),
+					requestId,
+				};
+				await writeResponseLog(env.LLMHUB_KV, responseLogData);
+			}
+
 
 			return new Response(upstream.body, {
 				status: upstream.status,
@@ -359,14 +367,16 @@ async function handleProxy(
 
 			// Final attempt failed
 			const responseTime = Date.now() - startTime;
-			const responseLogData: ResponseLogData = {
-				timestamp: new Date().toISOString(),
-				status: 502,
-				responseTime,
-				error: message,
-				requestId,
-			};
-			await writeResponseLog(env.LLMHUB_KV, responseLogData);
+			if (logsEnabled) {
+				const responseLogData: ResponseLogData = {
+					timestamp: new Date().toISOString(),
+					status: 502,
+					responseTime,
+					error: message,
+					requestId,
+				};
+				await writeResponseLog(env.LLMHUB_KV, responseLogData);
+			}
 
 			return jsonResponse({ error: `Upstream request failed: ${message}` }, 502);
 		}
