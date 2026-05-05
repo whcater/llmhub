@@ -1,5 +1,5 @@
 import type { Env, Endpoint, ProviderConfig, ProviderName, SelectionStrategy } from "./types";
-import { SUPPORTED_PROVIDERS, DEFAULT_STRATEGY } from "./types";
+import { SUPPORTED_PROVIDERS, DEFAULT_STRATEGY, DEFAULT_VERSION } from "./types";
 import { handleAdmin } from "./admin";
 import {
 	writeRequestLog,
@@ -127,6 +127,25 @@ async function isLogsEnabled(env: Env): Promise<boolean> {
 	return (await env.LLMHUB_KV.get("logs_enabled")) === "true";
 }
 
+// Rewrite the leading version segment of subPath when it differs from the configured version.
+// Only first segments shaped like /v1, /v2, /v1beta, /v2alpha are treated as versions.
+function applyVersionOverride(subPath: string, configuredVersion: string): string {
+	const m = subPath.match(/^\/(v[a-zA-Z0-9]+)(\/.*)?$/);
+	if (!m) return subPath;
+	const requestVersion = m[1];
+	const rest = m[2] ?? "";
+	if (requestVersion === configuredVersion) return subPath;
+	return `/${configuredVersion}${rest}`;
+}
+
+// Merge client query then configured query onto u; configured values win on conflict.
+function mergeQuery(u: URL, clientSearch: URLSearchParams, configuredQuery?: string) {
+	clientSearch.forEach((v, k) => u.searchParams.set(k, v));
+	if (configuredQuery) {
+		new URLSearchParams(configuredQuery).forEach((v, k) => u.searchParams.set(k, v));
+	}
+}
+
 
 function buildUpstreamRequest(
 	request: Request,
@@ -169,31 +188,37 @@ function buildUpstreamRequest(
 	const bodySize = headers.get('content-length');
 	console.log(`Request body size: ${formatBytes(bodySize)} `);
 
+	const version = endpoint.version?.trim() || DEFAULT_VERSION;
+	const effectiveSubPath = applyVersionOverride(subPath, version);
+	if (effectiveSubPath !== subPath) {
+		console.log(`[${provider}] version override: ${subPath} → ${effectiveSubPath}`);
+	}
+
+	const upstreamUrl = new URL(`${base}${effectiveSubPath}`);
 	let targetUrl: string;
 
 	switch (provider) {
 		case "anthropic":
-			// Anthropic uses Bearer token auth
-			headers.set("Authorization", `Bearer ${endpoint.apiKey}`);
-			targetUrl = `${base}${subPath}${reqUrl.search}`;
-			break;
-
 		case "openai":
 		case "grok":
-			// OpenAI-compatible: Bearer token
+			// Bearer token auth; merge client + configured query (configured wins)
 			headers.set("Authorization", `Bearer ${endpoint.apiKey}`);
-			targetUrl = `${base}${subPath}${reqUrl.search}`;
+			mergeQuery(upstreamUrl, reqUrl.searchParams, endpoint.query);
+			targetUrl = upstreamUrl.toString();
 			break;
 
 		case "gemini": {
-			// Google AI: API key as query parameter
-			const u = new URL(`${base}${subPath}`);
-			u.searchParams.set("key", endpoint.apiKey);
-			// Preserve original query params
+			// Google AI: API key as query parameter, must always come from endpoint.apiKey
 			reqUrl.searchParams.forEach((v, k) => {
-				if (k !== "key") u.searchParams.set(k, v);
+				if (k !== "key") upstreamUrl.searchParams.set(k, v);
 			});
-			targetUrl = u.toString();
+			if (endpoint.query) {
+				new URLSearchParams(endpoint.query).forEach((v, k) => {
+					if (k !== "key") upstreamUrl.searchParams.set(k, v);
+				});
+			}
+			upstreamUrl.searchParams.set("key", endpoint.apiKey);
+			targetUrl = upstreamUrl.toString();
 			break;
 		}
 	}

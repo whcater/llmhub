@@ -95,7 +95,7 @@ export function adminPage(): string {
 <style>
 ${baseStyle}
 body { padding: 1.5rem; }
-.container { max-width: 960px; margin: 0 auto; margin-left: 220px; }
+.container { max-width: 1400px; margin: 0 auto; padding-left: 220px; }
 header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem; }
 header h1 { font-size: 1.4rem; }
 header .logout { color: ${COLORS.textDim}; font-size: 0.8rem; cursor: pointer; transition: color 0.2s; }
@@ -175,18 +175,22 @@ header .logout:hover { color: ${COLORS.primary}; }
 .ep-header input[type="checkbox"] { accent-color: ${COLORS.primary}; width: 16px; height: 16px; cursor: pointer; flex: 0 0 16px; }
 .ep-header .header-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ep-header .header-label:nth-child(2) { flex: 1 1 0; min-width: 0; }
-.ep-header .header-label:nth-child(3) { flex: 0 0 100px; width: 100px; }
+.ep-header .header-label:nth-child(3) { flex: 0 0 50px; width: 50px; text-align: center; }
 .ep-header .header-label:nth-child(4) { flex: 0 0 100px; width: 100px; }
-.ep-header .header-label:nth-child(5) { flex: 0 0 220px; width: 180px; }
+.ep-header .header-label:nth-child(5) { flex: 0 0 100px; width: 100px; }
+.ep-header .header-label:nth-child(6) { flex: 0 0 220px; width: 220px; }
+.ep-header .header-label:nth-child(7) { flex: 0 0 200px; width: 200px; }
 .ep-row {
 	display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 0.65rem; border-radius: 8px;
 	background: ${COLORS.input}; border: 1px solid ${COLORS.border}; flex-wrap: wrap;
 }
 .ep-row .mono { font-family: 'SF Mono','Fira Code',monospace; font-size: 0.78rem; color: ${COLORS.textDim}; }
 .ep-row .url { flex: 1; min-width: 100px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ep-row .ver { width: 50px; font-size: 0.7rem; color: ${COLORS.primary}; text-align: center; flex-shrink: 0; }
 .ep-row .key { width: 100px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ep-row .model { width: 100px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #e94560; font-size: 0.75rem; }
-.ep-row .note { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: ${COLORS.text}; font-size: 0.75rem; }
+.ep-row .note { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: ${COLORS.text}; font-size: 0.75rem; }
+.ep-row .qry { max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: ${COLORS.textDim}; font-size: 0.72rem; }
 .ep-row input[type="checkbox"] { accent-color: ${COLORS.primary}; width: 16px; height: 16px; cursor: pointer; }
 .ep-row .actions { display: flex; gap: 0.35rem; margin-left: auto; flex-shrink: 0; }
 .test-indicator { font-size: 0.75rem; min-width: 60px; text-align: center; }
@@ -204,7 +208,7 @@ header .logout:hover { color: ${COLORS.primary}; }
 /* Responsive */
 @media (max-width: 900px) {
 	.sidebar { display: none; }
-	.container { margin-left: auto; }
+	.container { padding-left: 0; }
 }
 @media (max-width: 600px) {
 	body { padding: 0.75rem; }
@@ -218,8 +222,10 @@ header .logout:hover { color: ${COLORS.primary}; }
 	background: ${COLORS.input}; color: ${COLORS.text}; outline: none;
 }
 .ep-row .edit-url { flex: 1; min-width: 100px; }
+.ep-row .edit-version { width: 60px; }
 .ep-row .edit-key { width: 120px; }
 .ep-row .edit-model { width: 100px; margin-left: 4px; }
+.ep-row .edit-query { width: 160px; }
 
 /* Logs Section */
 .logs-section { background: ${COLORS.card}; border-radius: 12px; padding: 1.25rem 1.5rem; margin-bottom: 1rem; scroll-margin-top: 1rem; }
@@ -582,9 +588,11 @@ function buildCard(name, endpoints) {
 		+ '</div>'
 		+ '<div class="add-form">'
 		+ '  <div class="field"><label>Base URL</label><input type="url" placeholder="https://..." data-url></div>'
+		+ '  <div class="field" style="max-width:90px;flex:0 0 90px"><label>Version</label><input type="text" placeholder="v1" value="v1" data-version></div>'
 		+ '  <div class="field"><label>API Key</label><input type="text" placeholder="sk-..." data-key></div>'
 		+ '  <div class="field"><label>Model (optional)</label><input type="text" placeholder="e.g. gpt-4o..." data-model></div>'
 		+ '  <div class="field"><label>Note</label><input type="text" placeholder="desc" data-note></div>'
+		+ '  <div class="field"><label>Query (optional)</label><input type="text" placeholder="beta=true&foo=bar" data-query></div>'
 		+ '  <div class="field weight-field' + (currentStrategy !== 'weighted' ? ' hidden' : '') + '"><label>Weight</label><input type="number" min="1" max="100" value="1" data-weight></div>'
 		+ '  <button class="btn-sm btn-primary add-btn">Add</button>'
 		+ '</div>'
@@ -619,17 +627,21 @@ function buildCard(name, endpoints) {
 	// Add button
 	card.querySelector('.add-btn').addEventListener('click', () => {
 		const url = card.querySelector('[data-url]').value.trim();
+		const version = card.querySelector('[data-version]').value.trim() || 'v1';
 		const key = card.querySelector('[data-key]').value.trim();
 		const model = card.querySelector('[data-model]').value.trim();
 		const note = card.querySelector('[data-note]').value.trim();
+		const query = card.querySelector('[data-query]').value.trim();
 		const weight = parseInt(card.querySelector('[data-weight]')?.value) || 1;
 		if (!url || !key) return;
 		providerData[name] = providerData[name] || [];
-		providerData[name].push({ baseUrl: url, apiKey: key, enabled: true, weight: Math.max(1, weight), model: model || undefined, note: note || undefined });
+		providerData[name].push({ baseUrl: url, version, apiKey: key, enabled: true, weight: Math.max(1, weight), model: model || undefined, note: note || undefined, query: query || undefined });
 		card.querySelector('[data-url]').value = '';
+		card.querySelector('[data-version]').value = 'v1';
 		card.querySelector('[data-key]').value = '';
 		card.querySelector('[data-model]').value = '';
 		card.querySelector('[data-note]').value = '';
+		card.querySelector('[data-query]').value = '';
 		if (card.querySelector('[data-weight]')) card.querySelector('[data-weight]').value = '1';
 		saveProvider(name);
 	});
@@ -653,9 +665,11 @@ function renderEndpoints(name, card, endpoints) {
 	header.innerHTML =
 		'<input type="checkbox" data-select-all' + (endpoints.every(ep => ep.enabled) ? ' checked' : '') + '>'
 		+ '<span class="header-label">Base URL</span>'
+		+ '<span class="header-label">Ver</span>'
 		+ '<span class="header-label">API Key</span>'
 		+ '<span class="header-label">Model</span>'
-		+ '<span class="header-label">Note</span>';
+		+ '<span class="header-label">Note</span>'
+		+ '<span class="header-label">Query</span>';
 	list.appendChild(header);
 
 	// Select all handler
@@ -673,12 +687,15 @@ function renderEndpoints(name, card, endpoints) {
 		row.className = 'ep-row';
 		const modelDisplay = ep.model ? '<span class="mono model" title="Model: ' + esc(ep.model) + '">' + esc(ep.model.slice(0, 12)) + '</span>' : '';
 		const noteDisplay = ep.note ? '<span class="note" title="' + esc(ep.note) + '">' + esc(ep.note) + '</span>' : '';
+		const queryDisplay = ep.query ? '<span class="mono qry" title="Query: ' + esc(ep.query) + '">?' + esc(ep.query) + '</span>' : '';
 		row.innerHTML =
 			'<input type="checkbox"' + (ep.enabled ? ' checked' : '') + ' data-toggle>'
 			+ '<span class="mono url" title="' + esc(ep.baseUrl) + '">' + esc(mask(ep.baseUrl, 30)) + '</span>'
+			+ '<span class="mono ver" title="API version">' + esc(ep.version || 'v1') + '</span>'
 			+ '<span class="mono key" title="API Key">' + esc(mask(ep.apiKey, 8)) + '</span>'
 			+ modelDisplay
 			+ noteDisplay
+			+ queryDisplay
 			+ '<span class="ep-weight-cell mono' + (isWeighted ? '' : ' hidden') + '" title="Weight">w:' + (ep.weight || 1) + '</span>'
 			+ '<span class="test-indicator" data-ti></span>'
 			+ '<div class="actions">'
@@ -729,9 +746,11 @@ function renderEndpoints(name, card, endpoints) {
 
 		row.querySelector('.edit-btn').addEventListener('click', () => {
 			const urlSpan = row.querySelector('.url');
+			const verSpan = row.querySelector('.ver');
 			const keySpan = row.querySelector('.key');
 			const modelSpan = row.querySelector('.model');
 			const noteSpan = row.querySelector('.note');
+			const qrySpan = row.querySelector('.qry');
 			const weightSpan = row.querySelector('.ep-weight-cell');
 			const actionsDiv = row.querySelector('.actions');
 
@@ -740,6 +759,13 @@ function renderEndpoints(name, card, endpoints) {
 			urlInput.className = 'edit-input edit-url';
 			urlInput.value = ep.baseUrl;
 			urlSpan.replaceWith(urlInput);
+
+			const verInput = document.createElement('input');
+			verInput.type = 'text';
+			verInput.className = 'edit-input edit-version';
+			verInput.placeholder = 'v1';
+			verInput.value = ep.version || 'v1';
+			verSpan.replaceWith(verInput);
 
 			const keyInput = document.createElement('input');
 			keyInput.type = 'text';
@@ -769,6 +795,17 @@ function renderEndpoints(name, card, endpoints) {
 				modelInput.after(noteInput);
 			}
 
+			const qryInput = document.createElement('input');
+			qryInput.type = 'text';
+			qryInput.className = 'edit-input edit-query';
+			qryInput.placeholder = 'beta=true&foo=bar';
+			qryInput.value = ep.query || '';
+			if (qrySpan) {
+				qrySpan.replaceWith(qryInput);
+			} else {
+				noteInput.after(qryInput);
+			}
+
 			if (weightSpan) {
 				const weightInput = document.createElement('input');
 				weightInput.type = 'number';
@@ -785,14 +822,18 @@ function renderEndpoints(name, card, endpoints) {
 
 			actionsDiv.querySelector('.save-btn').addEventListener('click', () => {
 				const newUrl = urlInput.value.trim();
+				const newVer = verInput.value.trim() || 'v1';
 				const newKey = keyInput.value.trim();
 				const newModel = modelInput.value.trim();
 				const newNote = noteInput.value.trim();
+				const newQuery = qryInput.value.trim();
 				if (!newUrl || !newKey) return;
 				providerData[name][i].baseUrl = newUrl;
+				providerData[name][i].version = newVer;
 				providerData[name][i].apiKey = newKey;
 				providerData[name][i].model = newModel || undefined;
 				providerData[name][i].note = newNote || undefined;
+				providerData[name][i].query = newQuery || undefined;
 				const wInput = row.querySelector('.edit-weight');
 				if (wInput) providerData[name][i].weight = Math.max(1, parseInt(wInput.value) || 1);
 				saveProvider(name);
@@ -887,7 +928,7 @@ async function testOne(provider, ep, indicator) {
 	try {
 		const r = await api('/test', {
 			method: 'POST',
-			body: JSON.stringify({ provider, baseUrl: ep.baseUrl, apiKey: ep.apiKey, model: ep.model }),
+			body: JSON.stringify({ provider, baseUrl: ep.baseUrl, apiKey: ep.apiKey, model: ep.model, version: ep.version, query: ep.query }),
 		});
 		const ms = Math.round(performance.now() - start);
 		if (!r) return;

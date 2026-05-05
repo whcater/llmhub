@@ -149,6 +149,8 @@ function sanitizeEndpoint(endpoint: unknown) {
 	}
 	return {
 		baseUrl: value.baseUrl,
+		version: typeof value.version === "string" && value.version.trim() ? value.version.trim() : undefined,
+		query: typeof value.query === "string" && value.query.trim() ? value.query.trim() : undefined,
 		apiKey: value.apiKey,
 		enabled: value.enabled,
 		weight: typeof value.weight === "number" ? value.weight : undefined,
@@ -209,15 +211,22 @@ async function checkJsonBodyError(resp: Response, duration: number): Promise<Tes
 	return { success: true, duration, status: 200 };
 }
 
-async function runTest(provider: string, baseUrl: string, apiKey: string, model?: string): Promise<TestResult> {
+async function runTest(provider: string, baseUrl: string, apiKey: string, model?: string, version?: string, query?: string): Promise<TestResult> {
 	const start = Date.now();
+	const v = version?.trim() || "v1";
+	const base = baseUrl.replace(/\/+$/, "");
+	const buildUrl = (path: string, defaults: Record<string, string> = {}) => {
+		const u = new URL(`${base}${path}`);
+		Object.entries(defaults).forEach(([k, val]) => u.searchParams.set(k, val));
+		if (query) new URLSearchParams(query).forEach((val, k) => u.searchParams.set(k, val));
+		return u.toString();
+	};
 	try {
 		let resp: Response;
-		const base = baseUrl.replace(/\/+$/, "");
 
 		switch (provider) {
 			case "anthropic": {
-				resp = await fetch(`${base}/v1/messages?beta=true`, {
+				resp = await fetch(buildUrl(`/${v}/messages`, { beta: "true" }), {
 					method: "POST",
 					headers: {
 						"accept": "application/json",
@@ -274,7 +283,7 @@ async function runTest(provider: string, baseUrl: string, apiKey: string, model?
 			}
 
 			case "openai": {
-				resp = await fetch(`${base}/v1/chat/completions`, {
+				resp = await fetch(buildUrl(`/${v}/chat/completions`), {
 					method: "POST",
 					headers: {
 						"Authorization": `Bearer ${apiKey}`,
@@ -295,7 +304,7 @@ async function runTest(provider: string, baseUrl: string, apiKey: string, model?
 			}
 
 			case "grok": {
-				resp = await fetch(`${base}/v1/chat/completions`, {
+				resp = await fetch(buildUrl(`/${v}/chat/completions`), {
 					method: "POST",
 					headers: {
 						"Authorization": `Bearer ${apiKey}`,
@@ -316,7 +325,14 @@ async function runTest(provider: string, baseUrl: string, apiKey: string, model?
 			}
 
 			case "gemini": {
-				resp = await fetch(`${base}/v1beta/models/${model || "gemini-2.0-flash"}:generateContent?key=${apiKey}`, {
+				const u = new URL(`${base}/${v}/models/${model || "gemini-2.0-flash"}:generateContent`);
+				if (query) {
+					new URLSearchParams(query).forEach((val, k) => {
+						if (k !== "key") u.searchParams.set(k, val);
+					});
+				}
+				u.searchParams.set("key", apiKey);
+				resp = await fetch(u.toString(), {
 					method: "POST",
 					headers: { "Content-Type": "application/json" },
 					body: JSON.stringify({
@@ -346,12 +362,12 @@ async function runTest(provider: string, baseUrl: string, apiKey: string, model?
 async function testEndpoint(request: Request, _env: Env): Promise<Response> {
 	if (request.method !== "POST") return json({ error: "Method not allowed" }, 405);
 
-	const body = await request.json<{ provider?: string; baseUrl?: string; apiKey?: string; model?: string }>();
+	const body = await request.json<{ provider?: string; baseUrl?: string; apiKey?: string; model?: string; version?: string; query?: string }>();
 	if (!body.provider || !body.baseUrl || !body.apiKey) {
 		return json({ error: "provider, baseUrl, and apiKey are required" }, 400);
 	}
 
-	const result = await runTest(body.provider, body.baseUrl, body.apiKey, body.model);
+	const result = await runTest(body.provider, body.baseUrl, body.apiKey, body.model, body.version, body.query);
 	return json(result);
 }
 
@@ -376,7 +392,7 @@ async function testBatch(request: Request, env: Env): Promise<Response> {
 
 	const results = await Promise.all(
 		enabledEndpoints.map(async (ep) => {
-			const result = await runTest(body.provider!, ep.baseUrl, ep.apiKey, ep.model);
+			const result = await runTest(body.provider!, ep.baseUrl, ep.apiKey, ep.model, ep.version, ep.query);
 			return { baseUrl: ep.baseUrl, ...result };
 		}),
 	);
