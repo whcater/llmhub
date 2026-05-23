@@ -4,6 +4,7 @@ import { handleAdmin } from "./admin";
 import {
 	writeRequestLog,
 	writeResponseLog,
+	parseSSEStreamForLog,
 	type RequestLogData,
 	type ResponseLogData
 } from "./logger";
@@ -247,26 +248,15 @@ function buildUpstreamRequest(
 async function handleProxy(
 	request: Request,
 	env: Env,
+	ctx: ExecutionContext,
 	provider: ProviderName,
 	subPath: string,
 ): Promise<Response> {
 	const startTime = Date.now();
 
-	// Auth
-	const authErr = await verifyToken(request, env);
-	if (authErr) return authErr;
-
-	// Endpoint selection
-	const selection = await selectEndpoint(provider, env);
-	if (!selection) {
-		return jsonResponse({ error: `No available endpoint for provider: ${provider}` }, 503);
-	}
-
-	// Read request body once for reuse (logging + possible retries)
+	// Read body first so we can log even when later steps (auth/endpoint) reject.
 	let requestBody: any = undefined;
 	let bodyText: string | undefined = undefined;
-	const logsEnabled = await isLogsEnabled(env);
-
 	if (request.body && request.method !== "GET" && request.method !== "HEAD") {
 		try {
 			bodyText = await request.text();
@@ -274,6 +264,59 @@ async function handleProxy(
 		} catch {
 			// If reading fails, skip body logging
 		}
+	}
+
+	const logsEnabled = await isLogsEnabled(env);
+	const rawLogsFlag = await env.LLMHUB_KV.get("logs_enabled");
+	console.log(`[${provider}] logsEnabled=${logsEnabled} (raw KV value=${JSON.stringify(rawLogsFlag)})`);
+	const requestId = logsEnabled
+		? `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`
+		: "";
+
+	// Write request log up front so failed-auth / no-endpoint requests are still recorded.
+	if (logsEnabled) {
+		const requestLogData: RequestLogData = {
+			timestamp: new Date().toISOString(),
+			method: request.method,
+			path: new URL(request.url).pathname,
+			headers: Object.fromEntries(request.headers.entries()),
+			body: requestBody,
+			query: new URL(request.url).search,
+			ip: request.headers.get('cf-connecting-ip') || undefined,
+			userAgent: request.headers.get('user-agent') || undefined,
+			requestId,
+		};
+		console.log(`[${provider}] scheduling request log requestId=${requestId}`);
+		ctx.waitUntil(writeRequestLog(env.LLMHUB_KV, requestLogData));
+	}
+
+	const logEarlyResponse = (status: number, errorBody: any) => {
+		if (!logsEnabled) return;
+		ctx.waitUntil(writeResponseLog(env.LLMHUB_KV, {
+			timestamp: new Date().toISOString(),
+			status,
+			responseTime: Date.now() - startTime,
+			body: errorBody,
+			requestId,
+		}));
+	};
+
+	// Auth
+	const authErr = await verifyToken(request, env);
+	if (authErr) {
+		const cloned = authErr.clone();
+		let body: any;
+		try { body = await cloned.json(); } catch {}
+		logEarlyResponse(authErr.status, body);
+		return authErr;
+	}
+
+	// Endpoint selection
+	const selection = await selectEndpoint(provider, env);
+	if (!selection) {
+		const errBody = { error: `No available endpoint for provider: ${provider}` };
+		logEarlyResponse(503, errBody);
+		return jsonResponse(errBody, 503);
 	}
 
 	// Inject system records for Claude CLI requests
@@ -301,21 +344,6 @@ async function handleProxy(
 	if (endpointModel && requestBody && typeof requestBody === "object" && "model" in requestBody) {
 		requestBody.model = endpointModel;
 		bodyText = JSON.stringify(requestBody);
-	}
-
-	let requestId = "";
-	if (logsEnabled) {
-		const requestLogData: RequestLogData = {
-			timestamp: new Date().toISOString(),
-			method: request.method,
-			path: new URL(request.url).pathname,
-			headers: Object.fromEntries(request.headers.entries()),
-			body: requestBody,
-			query: new URL(request.url).search,
-			ip: request.headers.get('cf-connecting-ip') || undefined,
-			userAgent: request.headers.get('user-agent') || undefined,
-		};
-		requestId = await writeRequestLog(env.LLMHUB_KV, requestLogData);
 	}
 
 	const { enabled, strategy } = selection;
@@ -357,24 +385,44 @@ async function handleProxy(
 
 			// Success or final attempt — log and return
 			let responseBody: any = undefined;
-			const clonedResponse = upstream.clone();
-			try { responseBody = await clonedResponse.json(); } catch { }
+			let clientBody: ReadableStream<Uint8Array> | null = upstream.body;
+			let logBranch: ReadableStream<Uint8Array> | null = null;
+			const _ctRes = upstream.headers.get('content-type') || '';
+			const _isStreamRes = _ctRes.includes('event-stream');
+
+			if (_isStreamRes && upstream.body && logsEnabled) {
+				// Tee the stream so we can log without blocking the client
+				const [a, b] = upstream.body.tee();
+				clientBody = a;
+				logBranch = b;
+			} else if (!_isStreamRes) {
+				const clonedResponse = upstream.clone();
+				try { responseBody = await clonedResponse.json(); } catch { }
+			}
 			if(responseBody) console.log(responseBody);
 
 			if (logsEnabled) {
-				const responseLogData: ResponseLogData = {
-					timestamp: new Date().toISOString(),
+				const responseTimestamp = new Date().toISOString();
+				const responseHeaders = Object.fromEntries(upstream.headers.entries());
+				const baseLog = {
+					timestamp: responseTimestamp,
 					status: upstream.status,
 					responseTime,
-					body: responseBody,
-					headers: Object.fromEntries(upstream.headers.entries()),
+					headers: responseHeaders,
 					requestId,
 				};
-				await writeResponseLog(env.LLMHUB_KV, responseLogData);
+				if (logBranch) {
+					ctx.waitUntil((async () => {
+						const parsed = await parseSSEStreamForLog(logBranch!);
+						await writeResponseLog(env.LLMHUB_KV, { ...baseLog, body: parsed });
+					})());
+				} else {
+					ctx.waitUntil(writeResponseLog(env.LLMHUB_KV, { ...baseLog, body: responseBody }));
+				}
 			}
 
 
-			return new Response(upstream.body, {
+			return new Response(clientBody, {
 				status: upstream.status,
 				statusText: upstream.statusText,
 				headers: upstream.headers,
@@ -400,7 +448,7 @@ async function handleProxy(
 					error: message,
 					requestId,
 				};
-				await writeResponseLog(env.LLMHUB_KV, responseLogData);
+				ctx.waitUntil(writeResponseLog(env.LLMHUB_KV, responseLogData));
 			}
 
 			return jsonResponse({ error: `Upstream request failed: ${message}` }, 502);
@@ -414,7 +462,7 @@ async function handleProxy(
 // ── Router ──────────────────────────────────────────────────────────
 
 export default {
-	async fetch(request: Request, env: Env): Promise<Response> {
+	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
 		const url = new URL(request.url);
 		const path = url.pathname;
 
@@ -436,6 +484,6 @@ export default {
 			return jsonResponse({ error: `Unsupported provider: ${provider}` }, 404);
 		}
 
-		return handleProxy(request, env, provider as ProviderName, subPath);
+		return handleProxy(request, env, ctx, provider as ProviderName, subPath);
 	},
 } satisfies ExportedHandler<Env>;

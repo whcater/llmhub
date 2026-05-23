@@ -87,16 +87,18 @@ export async function writeRequestLog(kv: KVNamespace, data: RequestLogData): Pr
     const requestId = data.requestId || generateRequestId();
 
     const key = `logs/${folderName}/${requestId}_req`;
-    
+    console.log(`[logger] writeRequestLog → key=${key}`);
+
     // Convert timestamp to Shanghai time before saving
     const logData = {
       ...data,
       timestamp: toShanghaiTime(timestamp),
     };
-    
+
     const content = JSON.stringify(logData, null, 2);
-    
+
     await kv.put(key, content);
+    console.log(`[logger] writeRequestLog ✓ ${key} (${content.length}B)`);
 
     return requestId;
   } catch (error) {
@@ -117,16 +119,18 @@ export async function writeResponseLog(kv: KVNamespace, data: ResponseLogData): 
     const requestId = data.requestId || generateRequestId();
 
     const key = `logs/${folderName}/${requestId}_res`;
-    
+    console.log(`[logger] writeResponseLog → key=${key} status=${data.status}`);
+
     // Convert timestamp to Shanghai time before saving
     const logData = {
       ...data,
       timestamp: toShanghaiTime(timestamp),
     };
-    
+
     const content = JSON.stringify(logData, null, 2);
-    
+
     await kv.put(key, content);
+    console.log(`[logger] writeResponseLog ✓ ${key} (${content.length}B)`);
 
     return requestId;
   } catch (error) {
@@ -229,4 +233,105 @@ export function getCurrentLogFilePath(): string {
   const folderName = getLogFolderName();
   const minute = String(new Date().getMinutes()).padStart(2, '0');
   return `logs/${folderName}/${minute}.log`;
+}
+
+export interface ParsedStreamLog {
+  text: string;
+  events: number;
+  stopReason?: string;
+  usage?: any;
+  toolUse?: any[];
+}
+
+/**
+ * Consume an SSE stream and assemble a human-readable summary.
+ * Supports Anthropic / OpenAI / Gemini delta formats.
+ * Safe to call with any stream — unknown payloads are ignored.
+ */
+export async function parseSSEStreamForLog(stream: ReadableStream<Uint8Array>): Promise<ParsedStreamLog> {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let text = '';
+  let events = 0;
+  let stopReason: string | undefined;
+  let usage: any;
+  const toolUse: any[] = [];
+
+  const processEvent = (rawEvent: string) => {
+    events++;
+    for (const line of rawEvent.split('\n')) {
+      if (!line.startsWith('data:')) continue;
+      const payload = line.slice(5).trim();
+      if (!payload || payload === '[DONE]') continue;
+      let evt: any;
+      try { evt = JSON.parse(payload); } catch { continue; }
+
+      // Anthropic
+      if (evt.type === 'content_block_delta') {
+        if (evt.delta?.type === 'text_delta' && typeof evt.delta.text === 'string') text += evt.delta.text;
+        if (evt.delta?.type === 'input_json_delta' && typeof evt.delta.partial_json === 'string') {
+          const idx = evt.index ?? 0;
+          toolUse[idx] = toolUse[idx] || { partial_json: '' };
+          toolUse[idx].partial_json += evt.delta.partial_json;
+        }
+      } else if (evt.type === 'content_block_start' && evt.content_block?.type === 'tool_use') {
+        const idx = evt.index ?? toolUse.length;
+        toolUse[idx] = { name: evt.content_block.name, id: evt.content_block.id, partial_json: '' };
+      } else if (evt.type === 'message_delta') {
+        if (evt.delta?.stop_reason) stopReason = evt.delta.stop_reason;
+        if (evt.usage) usage = { ...(usage || {}), ...evt.usage };
+      } else if (evt.type === 'message_start' && evt.message?.usage) {
+        usage = { ...(usage || {}), ...evt.message.usage };
+      }
+
+      // OpenAI / Grok (OpenAI-compatible)
+      const choice = evt.choices?.[0];
+      if (choice) {
+        if (typeof choice.delta?.content === 'string') text += choice.delta.content;
+        if (choice.finish_reason) stopReason = choice.finish_reason;
+        if (Array.isArray(choice.delta?.tool_calls)) {
+          for (const tc of choice.delta.tool_calls) {
+            const idx = tc.index ?? toolUse.length;
+            toolUse[idx] = toolUse[idx] || { name: '', arguments: '' };
+            if (tc.function?.name) toolUse[idx].name += tc.function.name;
+            if (tc.function?.arguments) toolUse[idx].arguments += tc.function.arguments;
+          }
+        }
+      }
+      if (evt.usage) usage = evt.usage;
+
+      // Gemini
+      const parts = evt.candidates?.[0]?.content?.parts;
+      if (Array.isArray(parts)) {
+        for (const p of parts) {
+          if (typeof p.text === 'string') text += p.text;
+        }
+      }
+      if (evt.candidates?.[0]?.finishReason) stopReason = evt.candidates[0].finishReason;
+      if (evt.usageMetadata) usage = evt.usageMetadata;
+    }
+  };
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let idx: number;
+      while ((idx = buffer.indexOf('\n\n')) >= 0) {
+        processEvent(buffer.slice(0, idx));
+        buffer = buffer.slice(idx + 2);
+      }
+    }
+    if (buffer.trim()) processEvent(buffer);
+  } catch (err) {
+    // Stream aborted or errored — return whatever we collected
+  }
+
+  const result: ParsedStreamLog = { text, events };
+  if (stopReason) result.stopReason = stopReason;
+  if (usage) result.usage = usage;
+  if (toolUse.length) result.toolUse = toolUse.filter(Boolean);
+  return result;
 }

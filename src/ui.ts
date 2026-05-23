@@ -1113,6 +1113,7 @@ async function loadLogFolders() {
 	const r = await api('/logs');
 	if (!r) return;
 	const d = await r.json();
+	const prev = logFolderSelect.value;
 	logFolderSelect.innerHTML = '<option value="">Select time period...</option>';
 	d.folders.forEach(f => {
 		const opt = document.createElement('option');
@@ -1120,6 +1121,16 @@ async function loadLogFolders() {
 		opt.textContent = f;
 		logFolderSelect.appendChild(opt);
 	});
+	// Preserve previous selection if still present, otherwise default to newest folder.
+	// Always dispatch change so the file list refreshes after KV gets new entries.
+	if (prev && d.folders.includes(prev)) {
+		logFolderSelect.value = prev;
+	} else if (d.folders.length > 0) {
+		logFolderSelect.value = d.folders[0];
+	}
+	if (logFolderSelect.value) {
+		logFolderSelect.dispatchEvent(new Event('change'));
+	}
 }
 
 logFolderSelect.addEventListener('change', async () => {
@@ -1134,12 +1145,7 @@ logFolderSelect.addEventListener('change', async () => {
 	logViewer.innerHTML = '<div class="log-empty">Select a log file to view</div>';
 });
 
-document.getElementById('refreshLogs').addEventListener('click', async () => {
-	await loadLogFolders();
-	if (logFolderSelect.value) {
-		logFolderSelect.dispatchEvent(new Event('change'));
-	}
-});
+document.getElementById('refreshLogs').addEventListener('click', loadLogFolders);
 
 // Auto-refresh
 autoRefreshCheckbox.addEventListener('change', () => {

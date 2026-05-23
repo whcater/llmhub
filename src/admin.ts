@@ -424,13 +424,16 @@ async function changePassword(request: Request, env: Env): Promise<Response> {
 async function listLogFolders(request: Request, env: Env): Promise<Response> {
 	if (request.method !== "GET") return json({ error: "Method not allowed" }, 405);
 
-	const list = await env.LLMHUB_KV.list({ prefix: "logs/" });
 	const folders = new Set<string>();
-	
-	for (const key of list.keys) {
-		const match = key.name.match(/^logs\/([^/]+)\//);
-		if (match) folders.add(match[1]);
-	}
+	let cursor: string | undefined;
+	do {
+		const list = await env.LLMHUB_KV.list({ prefix: "logs/", cursor });
+		for (const key of list.keys) {
+			const match = key.name.match(/^logs\/([^/]+)\//);
+			if (match) folders.add(match[1]);
+		}
+		cursor = list.list_complete ? undefined : list.cursor;
+	} while (cursor);
 
 	return json({ folders: Array.from(folders).sort().reverse() });
 }
@@ -439,13 +442,17 @@ async function listLogFiles(request: Request, env: Env, folder: string): Promise
 	if (request.method !== "GET") return json({ error: "Method not allowed" }, 405);
 
 	const prefix = `logs/${folder}/`;
-	const list = await env.LLMHUB_KV.list({ prefix });
-	
-	const files = list.keys.map(k => ({
-		name: k.name.replace(prefix, ""),
-		key: k.name,
-	})).sort((a, b) => b.name.localeCompare(a.name));
+	const files: Array<{ name: string; key: string }> = [];
+	let cursor: string | undefined;
+	do {
+		const list = await env.LLMHUB_KV.list({ prefix, cursor });
+		for (const k of list.keys) {
+			files.push({ name: k.name.replace(prefix, ""), key: k.name });
+		}
+		cursor = list.list_complete ? undefined : list.cursor;
+	} while (cursor);
 
+	files.sort((a, b) => b.name.localeCompare(a.name));
 	return json({ folder, files });
 }
 
