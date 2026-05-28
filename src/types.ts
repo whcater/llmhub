@@ -11,6 +11,14 @@ export interface Endpoint {
 	weight?: number; // for weighted strategy, default 1
 	model?: string; // optional model name, if set will override request body model
 	note?: string; // optional note to distinguish similar configs
+
+	// ── alinls-only optional fields ───────────────────────────────
+	// For provider="alinls": `apiKey` holds aliAccessKeySecret.
+	// All four below are alinls-specific; ignored by other providers.
+	aliAccessKeyId?: string;       // 阿里云 AccessKey ID (paired with apiKey as SK)
+	nlsAppKey?: string;            // NLS AppKey for the chosen language
+	lyBlueBearerToken?: string;    // optional: when present, AK/SK fetched dynamically from ly-blue
+	lyBlueOaid?: string;           // device oaid for ly-blue header
 }
 
 export const DEFAULT_VERSION = "v1";
@@ -32,6 +40,6 @@ export interface ProviderConfig {
 	strategy?: SelectionStrategy;
 }
 
-export type ProviderName = "anthropic" | "openai" | "gemini" | "grok";
+export type ProviderName = "anthropic" | "openai" | "gemini" | "grok" | "alinls";
 
-export const SUPPORTED_PROVIDERS: ProviderName[] = ["anthropic", "openai", "gemini", "grok"];
+export const SUPPORTED_PROVIDERS: ProviderName[] = ["anthropic", "openai", "gemini", "grok", "alinls"];

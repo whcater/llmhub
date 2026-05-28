@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
+    "d": "wrangler dev  --port 8787",
     "dev": "wrangler dev  --port 8788",
     "devp": "npx cross-env HTTP_PROXY=http://127.0.0.1:15715 HTTPS_PROXY=http://127.0.0.1:15715 GLOBAL_AGENT_HTTP_PROXY=http://127.0.0.1:15715 wrangler dev",
     "deploy": "wrangler deploy",

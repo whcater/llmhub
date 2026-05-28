@@ -2,7 +2,7 @@ import type { Env, ProviderConfig, ProviderName } from "./types";
 import { loginPage, adminPage } from "./ui";
 import { cleanupOldLogs } from "./logger";
 
-const SUPPORTED_PROVIDERS: ProviderName[] = ["anthropic", "openai", "gemini", "grok"];
+const SUPPORTED_PROVIDERS: ProviderName[] = ["anthropic", "openai", "gemini", "grok", "alinls"];
 
 const SESSION_TTL = 60 * 60 * 24; // 24 hours
 
@@ -156,6 +156,10 @@ function sanitizeEndpoint(endpoint: unknown) {
 		weight: typeof value.weight === "number" ? value.weight : undefined,
 		model: typeof value.model === "string" ? value.model : undefined,
 		note: typeof value.note === "string" ? value.note : undefined,
+		aliAccessKeyId: typeof value.aliAccessKeyId === "string" ? value.aliAccessKeyId : undefined,
+		nlsAppKey: typeof value.nlsAppKey === "string" ? value.nlsAppKey : undefined,
+		lyBlueBearerToken: typeof value.lyBlueBearerToken === "string" ? value.lyBlueBearerToken : undefined,
+		lyBlueOaid: typeof value.lyBlueOaid === "string" ? value.lyBlueOaid : undefined,
 	};
 }
 

@@ -1,6 +1,7 @@
 import type { Env, Endpoint, ProviderConfig, ProviderName, SelectionStrategy } from "./types";
 import { SUPPORTED_PROVIDERS, DEFAULT_STRATEGY, DEFAULT_VERSION } from "./types";
 import { handleAdmin } from "./admin";
+import { handleAsrTranscribe } from "./asr";
 import {
 	writeRequestLog,
 	writeResponseLog,
@@ -18,7 +19,7 @@ const jsonResponse = (body: unknown, status = 200) =>
 
 // ── Auth middleware ──────────────────────────────────────────────────
 
-async function verifyToken(request: Request, env: Env): Promise<Response | null> {
+export async function verifyToken(request: Request, env: Env): Promise<Response | null> {
 	const authToken = await env.LLMHUB_KV.get("auth_token");
 	if (!authToken) {
 		return jsonResponse({ error: "Service not configured: auth_token missing in KV" }, 503);
@@ -99,13 +100,13 @@ function advanceStickyIndex(provider: string, enabledCount: number): number {
 	return next;
 }
 
-interface EndpointSelection {
+export interface EndpointSelection {
 	endpoint: Endpoint;
 	enabled: Endpoint[];
 	strategy: SelectionStrategy;
 }
 
-async function selectEndpoint(provider: ProviderName, env: Env): Promise<EndpointSelection | null> {
+export async function selectEndpoint(provider: ProviderName, env: Env): Promise<EndpointSelection | null> {
 	const raw = await env.LLMHUB_KV.get(`provider:${provider}`);
 	if (!raw) return null;
 
@@ -124,7 +125,7 @@ function formatBytes(value: string | null): string {
 	return `${(bytes/1024).toFixed(2)} KB`;
 }
 
-async function isLogsEnabled(env: Env): Promise<boolean> {
+export async function isLogsEnabled(env: Env): Promise<boolean> {
 	return (await env.LLMHUB_KV.get("logs_enabled")) === "true";
 }
 
@@ -222,6 +223,10 @@ function buildUpstreamRequest(
 			targetUrl = upstreamUrl.toString();
 			break;
 		}
+
+		default:
+			// alinls (and any future non-proxy provider) is routed elsewhere; this is unreachable.
+			throw new Error(`buildUpstreamRequest called with non-proxy provider: ${provider}`);
 	}
 
 	// Debug: log x-api-key and Authorization before normalization
@@ -471,6 +476,11 @@ export default {
 			return handleAdmin(request, env, path);
 		}
 
+		// ASR routes (special: not a generic upstream proxy)
+		if (path === "/asr/transcribe") {
+			return handleAsrTranscribe(request, env, ctx);
+		}
+
 		// Provider proxy routes: /{provider}/...
 		const match = path.match(/^\/([^/]+)(\/.*)?$/);
 		if (!match) {
@@ -482,6 +492,14 @@ export default {
 
 		if (!SUPPORTED_PROVIDERS.includes(provider as ProviderName)) {
 			return jsonResponse({ error: `Unsupported provider: ${provider}` }, 404);
+		}
+
+		// alinls is not a generic upstream — it has dedicated /asr/* endpoints
+		if (provider === "alinls") {
+			return jsonResponse(
+				{ error: "alinls is not exposed via generic proxy; use /asr/transcribe or /asr/stream" },
+				404,
+			);
 		}
 
 		return handleProxy(request, env, ctx, provider as ProviderName, subPath);

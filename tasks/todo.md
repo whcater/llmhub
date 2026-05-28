@@ -1,0 +1,153 @@
+# ASR 模块接入 — Todo
+
+完整方案见 `~/.claude/plans/recursive-mixing-porcupine.md`。
+
+---
+
+## Sprint 1 — 后端 REST: `/asr/transcribe`
+
+### 类型 & 路由
+
+- [x] `src/types.ts`:`ProviderName` 加 `"alinls"`;`Endpoint` 加可选字段 `aliAccessKeyId?` / `nlsAppKey?` / `lyBlueBearerToken?` / `lyBlueOaid?`
+- [x] `src/index.ts`:在 router 块加 `/asr/transcribe` 分支,转入 `handleAsrTranscribe`(不走 `/{provider}/*` 通用代理);`buildUpstreamRequest` switch 加 default 防护,export `verifyToken/selectEndpoint/isLogsEnabled`
+- [x] `src/admin.ts:5`:`SUPPORTED_PROVIDERS` 加 `"alinls"`;`sanitizeEndpoint` 透传 4 个新字段
+
+### 业务逻辑
+
+- [x] 新建 `src/asr.ts`,实现:
+  - [x] `aliyunUrlEncode` (RFC3986 + `~`)
+  - [x] `nlsCreateToken(ak, sk)` — HMAC-SHA1 via SubtleCrypto
+  - [x] `lyBlueGetAliConfig(bearer, oaid)` — 调 ly-blue 拿 AK/SK + AppKey
+  - [x] `lyBlueTemporaryLogin(oaid)` — 匿名 bearer fallback
+  - [x] `NlsTokenManager`:KV `asr:nls_token` 缓存 23h,过期重签
+  - [x] `handleAsrTranscribe(req, env, ctx)`:鉴权 → 选 endpoint → 取 NLS token → 转发音频到 FlashRecognizer → 标准化 sentences[]
+  - [x] 复用 `writeRequestLog/writeResponseLog`(logger.ts)
+
+### Admin UI + 测试
+
+- [~] **延后到 S2**:alinls 单独的 admin UI tab + `testEndpoint` case。原因:alinls 字段集(lyBlueOaid 等)和现有 `testEndpoint` 入参 schema 不兼容,做成 generic UI 复杂度高。S1 改为 KV CLI 配置;`admin.ts:5 SUPPORTED_PROVIDERS` 已加 alinls,所以 `/admin/api/providers/alinls` 的 CRUD JSON 已经可用,只是没图形界面。
+- [x] `test/requests/asr.http`:curl 示例 + KV 配置命令
+
+### 验收
+
+- [x] `npx tsc --noEmit` 通过(零类型错)
+- [x] `wrangler dev` 启动成功;**negative path 全通**:
+  - `GET /asr/transcribe` → `405 {"error":"Method not allowed"}`
+  - `POST /asr/transcribe` (无 auth) → `401 Missing or invalid Authorization header`
+  - `POST /asr/transcribe` (错 auth) → `403 Invalid token`
+- [ ] **positive path 需要 ly-blue 凭证**:依赖 `C:\dev\lab\reverse\recordIdentify\config.json` 中的 `bearer_token` + `device_oaid`。验证步骤见下方"用户验证 SOP"
+- [ ] `npm run deploy` 部署 + 远端 curl
+
+---
+
+## 用户验证 SOP (S1 positive path)
+
+```bash
+# 1. 启动 dev server (如果还没跑)
+cd C:/dev/lab/llmhub
+npm run dev    # 在 127.0.0.1:8787
+                # 当前后台已有一个跑在 8787 (PID 不确定; 不需要就 Ctrl+C)
+
+# 2. 写入 LLMHub auth_token (用任意 32 字节 hex 字符串)
+TOKEN=$(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")
+echo "Auth token: $TOKEN"
+# 用 wrangler 写入 local KV (dev server 内部用的是 miniflare KV)
+# ⚠ 注意: --local 与 wrangler dev 默认的 KV 是同一个吗?
+#   - wrangler dev 默认是 local mode (miniflare)
+#   - 都写在 .wrangler/state/v3/kv/ 下的 sqlite
+#   - 二者应该一致, 否则就用 admin UI: 打开 http://localhost:8787/admin → 生成 token
+npx wrangler kv key put auth_token "$TOKEN" --binding LLMHUB_KV --local
+
+# 3. 从 recordIdentify 拿 ly-blue 凭证, 配置 alinls endpoint
+BEARER=$(node -e "console.log(JSON.parse(require('fs').readFileSync('C:/dev/lab/reverse/recordIdentify/config.json')).bearer_token)")
+OAID=$(node -e "console.log(JSON.parse(require('fs').readFileSync('C:/dev/lab/reverse/recordIdentify/config.json')).device_oaid)")
+
+CONFIG=$(cat <<EOF
+{
+  "endpoints": [{
+    "baseUrl": "https://nls-gateway.cn-shanghai.aliyuncs.com",
+    "apiKey": "",
+    "enabled": true,
+    "lyBlueBearerToken": "$BEARER",
+    "lyBlueOaid": "$OAID"
+  }],
+  "strategy": "failover-on-error"
+}
+EOF
+)
+npx wrangler kv key put provider:alinls "$CONFIG" --binding LLMHUB_KV --local
+
+
+# 4. 跑短音频转写
+curl -X POST "http://127.0.0.1:8787/asr/transcribe?format=MP3&sample_rate=16000" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/octet-stream" \
+  --data-binary @C:/dev/lab/reverse/recordIdentify/sample.mp3
+
+# 预期: {"sentences":[...], "full":"...", "taskId":"...", "upstreamStatus":20000000}
+```
+
+``` powershell
+
+$config = Get-Content "C:\dev\lab\reverse\recordIdentify\config.json" | ConvertFrom-Json
+
+$BEARER = $config.bearer_token
+$OAID = $config.device_oaid
+
+$kvConfig = @{
+    endpoints = @(
+        @{
+            baseUrl = "https://nls-gateway.cn-shanghai.aliyuncs.com"
+            apiKey = ""
+            enabled = $true
+            lyBlueBearerToken = $BEARER
+            lyBlueOaid = $OAID
+        }
+    )
+    strategy = "failover-on-error"
+} | ConvertTo-Json -Depth 10
+
+Set-Content -Path ".tmp-kv.json" -Value $kvConfig
+
+npx wrangler kv key put provider:alinls --path .tmp-kv.json --binding LLMHUB_KV --local
+```
+
+curl -X POST http://localhost:8787/asr/transcribe?lang=0 -H "Authorization: Bearer %OPENAI_API_KEY%" -H "X-Audio-Format: MP3" --data-binary @C:/dev/lab/reverse/recordIdentify/sample.mp3
+
+如果 4 步报错,常见原因:
+- ly-blue bearer 过期 (49d) → 跑 `python C:/dev/lab/reverse/recordIdentify/login.py` 刷新 config.json 后重做 step 3
+- KV 配置未生效 → `npx wrangler kv key get provider:alinls --binding LLMHUB_KV --local` 看回写
+- `Failed to acquire NLS token` → ly-blue 接口不通,或者 AK/SK 失效
+
+---
+
+## Sprint 2 — 后端 WSS: `/asr/stream` + Admin UI 补全
+
+(S1 positive 验收后展开,关键点:)
+- `handleAsrStream` (asr.ts) — `WebSocketPair` 接客户端 + `fetch{Upgrade:websocket}` 拨上游 + 双向桥接
+- StartTranscription 注入 appKey,客户端只发音频和 stop 控制帧
+- Admin UI alinls tab(独立 `buildAlinlsCard` 函数)
+- `testEndpoint` 加 alinls case(用 0.5s 静音 PCM 调 FlashRecognizer)
+
+## Sprint 3 — Tauri 客户端 (Windows 实时字幕 MVP)
+
+(S2 验收后展开)
+
+---
+
+## Review (S1)
+
+**完成**:类型扩展、`src/asr.ts`、`/asr/transcribe` 路由、tsc 零错、dev server 启动 OK、negative path 三种全通。
+
+**延后**:admin UI alinls tab 和 `testEndpoint` case 推到 S2 一起做。原因是 alinls 的字段集(lyBlue/AK/SK/AppKey)和现有 LLM provider 共用的 `buildCard` 形态差异大,强行复用会让 UI 代码污染严重。S2 单独写 `buildAlinlsCard` 更干净。
+
+**待验证**:positive path 需要 ly-blue 真实凭证,我无法自测;SOP 已写好。
+
+**踩坑**:
+- 一开始没 export `verifyToken/selectEndpoint/isLogsEnabled`(都是 file-local 函数),asr.ts 写完才发现需要复用。补了 export,无副作用。
+- `buildUpstreamRequest` 的 switch 在 ProviderName 加 `"alinls"` 后,TS 因 default case 缺失无法证明 `targetUrl` 已赋值。补 `default: throw` 兜底,因为 router 已经把 alinls 拦截走 `/asr/*`,这里 unreachable。
+
+## Lessons
+
+(等 positive 验收后再加,可能涉及阿里云签名/编码、Workers SubtleCrypto vs nodejs crypto 的差异)
+
