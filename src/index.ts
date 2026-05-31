@@ -1,7 +1,7 @@
 import type { Env, Endpoint, ProviderConfig, ProviderName, SelectionStrategy } from "./types";
 import { SUPPORTED_PROVIDERS, DEFAULT_STRATEGY, DEFAULT_VERSION } from "./types";
 import { handleAdmin } from "./admin";
-import { handleAsrTranscribe } from "./asr";
+import { handleAsrTranscribe, handleAsrStream } from "./asr";
 import {
 	writeRequestLog,
 	writeResponseLog,
@@ -479,6 +479,9 @@ export default {
 		// ASR routes (special: not a generic upstream proxy)
 		if (path === "/asr/transcribe") {
 			return handleAsrTranscribe(request, env, ctx);
+		}
+		if (path === "/asr/stream") {
+			return handleAsrStream(request, env, ctx);
 		}
 
 		// Provider proxy routes: /{provider}/...

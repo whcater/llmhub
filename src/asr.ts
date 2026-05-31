@@ -382,3 +382,201 @@ export async function handleAsrTranscribe(
 
 	return jsonResponse(result);
 }
+
+// ── WSS: /asr/stream (双向桥接到 nls-gateway SpeechTranscriber) ───────
+
+const NLS_GATEWAY_WSS = "https://nls-gateway.cn-shanghai.aliyuncs.com/ws/v1";
+
+// WS 升级请求带不了自定义 header, 接受 Authorization 或 ?token= 查询
+async function verifyWsToken(request: Request, env: Env): Promise<Response | null> {
+	const authToken = await env.LLMHUB_KV.get("auth_token");
+	if (!authToken) return jsonResponse({ error: "Service not configured: auth_token missing in KV" }, 503);
+
+	const authorization = request.headers.get("Authorization");
+	const url = new URL(request.url);
+	const queryToken = url.searchParams.get("token");
+	const presented = authorization?.startsWith("Bearer ") ? authorization.slice(7) : queryToken;
+
+	if (!presented) return jsonResponse({ error: "Missing token (use ?token= or Authorization: Bearer)" }, 401);
+
+	// 常量时间比较
+	if (presented.length !== authToken.length) return jsonResponse({ error: "Invalid token" }, 403);
+	let diff = 0;
+	for (let i = 0; i < presented.length; i++) diff |= presented.charCodeAt(i) ^ authToken.charCodeAt(i);
+	if (diff !== 0) return jsonResponse({ error: "Invalid token" }, 403);
+
+	return null;
+}
+
+export async function handleAsrStream(
+	request: Request,
+	env: Env,
+	ctx: ExecutionContext,
+): Promise<Response> {
+	const startTime = Date.now();
+	const logsEnabled = await isLogsEnabled(env);
+	const requestId = logsEnabled
+		? `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`
+		: "";
+
+	const logEarly = (status: number, errorBody: any) => {
+		if (!logsEnabled) return;
+		ctx.waitUntil(writeResponseLog(env.LLMHUB_KV, {
+			timestamp: new Date().toISOString(),
+			status,
+			responseTime: Date.now() - startTime,
+			body: errorBody,
+			requestId,
+		}));
+	};
+
+	// Upgrade 必须存在
+	if (request.headers.get("Upgrade") !== "websocket") {
+		const err = { error: "Expected WebSocket upgrade" };
+		logEarly(426, err);
+		return jsonResponse(err, 426);
+	}
+
+	const authErr = await verifyWsToken(request, env);
+	if (authErr) {
+		const cloned = authErr.clone();
+		let body: any;
+		try { body = await cloned.json(); } catch {}
+		logEarly(authErr.status, body);
+		return authErr;
+	}
+
+	const selection = await selectEndpoint("alinls", env);
+	if (!selection) {
+		const err = { error: "No available endpoint for provider: alinls" };
+		logEarly(503, err);
+		return jsonResponse(err, 503);
+	}
+
+	let bundle: NlsTokenBundle;
+	try {
+		bundle = await getNlsToken(selection.endpoint, env);
+	} catch (e) {
+		const msg = e instanceof Error ? e.message : String(e);
+		const err = { error: `Failed to acquire NLS token: ${msg}` };
+		logEarly(502, err);
+		return jsonResponse(err, 502);
+	}
+
+	const pair = new WebSocketPair();
+	const client = pair[0];
+	const server = pair[1];
+	server.accept();
+
+	// 拨上游
+	const upstreamUrl = `${NLS_GATEWAY_WSS}?token=${encodeURIComponent(bundle.token)}`;
+	let upstreamResp: Response;
+	try {
+		upstreamResp = await fetch(upstreamUrl, { headers: { Upgrade: "websocket" } });
+	} catch (e) {
+		const msg = e instanceof Error ? e.message : String(e);
+		try { server.close(1011, "upstream fetch failed"); } catch {}
+		logEarly(502, { error: `upstream fetch failed: ${msg}` });
+		return new Response(null, { status: 101, webSocket: client });
+	}
+
+	const upstream = upstreamResp.webSocket;
+	if (!upstream) {
+		try { server.close(1011, `upstream did not upgrade (HTTP ${upstreamResp.status})`); } catch {}
+		logEarly(502, { error: "upstream did not upgrade", upstreamStatus: upstreamResp.status });
+		return new Response(null, { status: 101, webSocket: client });
+	}
+	upstream.accept();
+
+	if (logsEnabled) {
+		const requestLogData: RequestLogData = {
+			timestamp: new Date().toISOString(),
+			method: request.method,
+			path: new URL(request.url).pathname,
+			headers: Object.fromEntries(request.headers.entries()),
+			body: undefined,
+			query: new URL(request.url).search,
+			ip: request.headers.get("cf-connecting-ip") || undefined,
+			userAgent: request.headers.get("user-agent") || undefined,
+			requestId,
+		};
+		ctx.waitUntil(writeRequestLog(env.LLMHUB_KV, requestLogData));
+	}
+
+	let bytesIn = 0;   // 客户端 → 上游
+	let bytesOut = 0;  // 上游 → 客户端
+	let sentenceCount = 0;
+	let closed = false;
+
+	const finalize = (code: number, reason: string) => {
+		if (closed) return;
+		closed = true;
+		if (logsEnabled) {
+			ctx.waitUntil(writeResponseLog(env.LLMHUB_KV, {
+				timestamp: new Date().toISOString(),
+				status: 101,
+				responseTime: Date.now() - startTime,
+				body: { closeCode: code, closeReason: reason, bytesIn, bytesOut, sentenceCount },
+				requestId,
+			}));
+		}
+	};
+
+	server.addEventListener("message", (e: MessageEvent) => {
+		try {
+			if (typeof e.data === "string") {
+				bytesIn += e.data.length;
+				let payload = e.data;
+				try {
+					const j: any = JSON.parse(e.data);
+					if (j?.header?.name === "StartTranscription") {
+						j.header.appkey = bundle.appKey;
+						payload = JSON.stringify(j);
+					}
+				} catch {}
+				upstream.send(payload);
+			} else {
+				const buf = e.data as ArrayBuffer;
+				bytesIn += buf.byteLength;
+				upstream.send(buf);
+			}
+		} catch {}
+	});
+
+	upstream.addEventListener("message", (e: MessageEvent) => {
+		try {
+			if (typeof e.data === "string") {
+				bytesOut += e.data.length;
+				try {
+					const j: any = JSON.parse(e.data);
+					if (j?.header?.name === "SentenceEnd") sentenceCount++;
+				} catch {}
+				server.send(e.data);
+			} else {
+				const buf = e.data as ArrayBuffer;
+				bytesOut += buf.byteLength;
+				server.send(buf);
+			}
+		} catch {}
+	});
+
+	server.addEventListener("close", (e: CloseEvent) => {
+		try { upstream.close(e.code, e.reason); } catch {}
+		finalize(e.code, e.reason || "client-close");
+	});
+	upstream.addEventListener("close", (e: CloseEvent) => {
+		try { server.close(e.code, e.reason); } catch {}
+		finalize(e.code, e.reason || "upstream-close");
+	});
+
+	server.addEventListener("error", () => {
+		try { upstream.close(1011, "client error"); } catch {}
+		finalize(1011, "client-error");
+	});
+	upstream.addEventListener("error", () => {
+		try { server.close(1011, "upstream error"); } catch {}
+		finalize(1011, "upstream-error");
+	});
+
+	return new Response(null, { status: 101, webSocket: client });
+}

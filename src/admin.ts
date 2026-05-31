@@ -215,7 +215,98 @@ async function checkJsonBodyError(resp: Response, duration: number): Promise<Tes
 	return { success: true, duration, status: 200 };
 }
 
-async function runTest(provider: string, baseUrl: string, apiKey: string, model?: string, version?: string, query?: string): Promise<TestResult> {
+// ── alinls 内联工具 (避免和 asr.ts 形成 admin→asr→index→admin 依赖环) ──
+function aliyunUrlEncode(s: string): string {
+	return encodeURIComponent(s)
+		.replace(/!/g, "%21").replace(/\*/g, "%2A").replace(/'/g, "%27")
+		.replace(/\(/g, "%28").replace(/\)/g, "%29");
+}
+function bufToBase64(buf: ArrayBuffer): string {
+	let bin = ""; const bytes = new Uint8Array(buf);
+	for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+	return btoa(bin);
+}
+function uuidHex(): string {
+	const buf = new Uint8Array(16);
+	crypto.getRandomValues(buf);
+	let out = ""; for (let i = 0; i < buf.length; i++) out += buf[i].toString(16).padStart(2, "0");
+	return out;
+}
+async function nlsCreateTokenInline(ak: string, sk: string): Promise<void> {
+	const params: Record<string, string> = {
+		AccessKeyId: ak, Action: "CreateToken", Format: "JSON", RegionId: "cn-shanghai",
+		SignatureMethod: "HMAC-SHA1", SignatureNonce: uuidHex(), SignatureVersion: "1.0",
+		Timestamp: new Date().toISOString().replace(/\.\d{3}Z$/, "Z"), Version: "2019-02-28",
+	};
+	const sortedKeys = Object.keys(params).sort();
+	const qs = sortedKeys.map((k) => `${aliyunUrlEncode(k)}=${aliyunUrlEncode(params[k])}`).join("&");
+	const stringToSign = `GET&${aliyunUrlEncode("/")}&${aliyunUrlEncode(qs)}`;
+	const key = await crypto.subtle.importKey(
+		"raw", new TextEncoder().encode(sk + "&"),
+		{ name: "HMAC", hash: "SHA-1" }, false, ["sign"],
+	);
+	const sigBuf = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(stringToSign));
+	const signature = bufToBase64(sigBuf);
+	const finalParams = new URLSearchParams({ ...params, Signature: signature });
+	const r = await fetch(`https://nls-meta.cn-shanghai.aliyuncs.com/?${finalParams.toString()}`);
+	if (!r.ok) throw new Error(`nls-meta HTTP ${r.status}`);
+	const j: any = await r.json();
+	if (!j.Token?.Id) throw new Error(`nls-meta token missing: ${JSON.stringify(j).slice(0, 200)}`);
+}
+async function lyBlueProbe(bearer: string, oaid: string): Promise<void> {
+	const h: Record<string, string> = {
+		Authorization: `Bearer ${bearer}`,
+		oaid, deviceNo: oaid, deviceType: "1",
+		phoneBrand: "Xiaomi", phoneModel: "25060RK16C",
+		versionCode: "1431", versionName: "14.3.1", channel: "4437",
+		productNum: "0001", markId: "", "User-Agent": "okhttp/4.9.3",
+		"Content-Type": "application/x-www-form-urlencoded",
+	};
+	const r = await fetch("https://ly-blue.lx86.net/api/v1/get_ali_ly_blue_config", {
+		method: "POST", headers: h, body: "",
+	});
+	if (!r.ok) throw new Error(`ly-blue HTTP ${r.status}`);
+	const j: any = await r.json();
+	if (j.code !== 200) throw new Error(`ly-blue code=${j.code}`);
+	if (!j.data?.[0]) throw new Error("ly-blue empty data");
+}
+
+interface AlinlsTestInput {
+	aliAccessKeyId?: string;
+	apiKey?: string;            // SK
+	nlsAppKey?: string;
+	lyBlueBearerToken?: string;
+	lyBlueOaid?: string;
+}
+
+async function runAlinlsTest(input: AlinlsTestInput, start: number): Promise<TestResult & { message?: string; details?: any }> {
+	const hasAk = !!(input.aliAccessKeyId && input.apiKey && input.nlsAppKey);
+	const hasLy = !!(input.lyBlueBearerToken && input.lyBlueOaid);
+	try {
+		if (hasAk) {
+			await nlsCreateTokenInline(input.aliAccessKeyId!, input.apiKey!);
+		} else if (hasLy) {
+			await lyBlueProbe(input.lyBlueBearerToken!, input.lyBlueOaid!);
+		} else {
+			return {
+				success: false, duration: Date.now() - start,
+				error: "alinls needs either {aliAccessKeyId+apiKey+nlsAppKey} or {lyBlueBearerToken+lyBlueOaid}",
+			};
+		}
+		return {
+			success: true, duration: Date.now() - start, status: 200,
+			message: "alinls credentials valid",
+			details: { hasAk, hasAppKey: !!input.nlsAppKey, hasLyBlue: hasLy },
+		};
+	} catch (e) {
+		return {
+			success: false, duration: Date.now() - start,
+			error: e instanceof Error ? e.message : String(e),
+		};
+	}
+}
+
+async function runTest(provider: string, baseUrl: string, apiKey: string, model?: string, version?: string, query?: string, extra?: AlinlsTestInput): Promise<TestResult> {
 	const start = Date.now();
 	const v = version?.trim() || "v1";
 	const base = baseUrl.replace(/\/+$/, "");
@@ -351,6 +442,16 @@ async function runTest(provider: string, baseUrl: string, apiKey: string, model?
 				return checkJsonBodyError(resp, duration);
 			}
 
+			case "alinls": {
+				return await runAlinlsTest({
+					aliAccessKeyId: extra?.aliAccessKeyId,
+					apiKey: extra?.apiKey ?? apiKey,
+					nlsAppKey: extra?.nlsAppKey,
+					lyBlueBearerToken: extra?.lyBlueBearerToken,
+					lyBlueOaid: extra?.lyBlueOaid,
+				}, start);
+			}
+
 			default:
 				return { success: false, duration: Date.now() - start, error: `Unsupported provider: ${provider}` };
 		}
@@ -366,12 +467,24 @@ async function runTest(provider: string, baseUrl: string, apiKey: string, model?
 async function testEndpoint(request: Request, _env: Env): Promise<Response> {
 	if (request.method !== "POST") return json({ error: "Method not allowed" }, 405);
 
-	const body = await request.json<{ provider?: string; baseUrl?: string; apiKey?: string; model?: string; version?: string; query?: string }>();
-	if (!body.provider || !body.baseUrl || !body.apiKey) {
-		return json({ error: "provider, baseUrl, and apiKey are required" }, 400);
+	const body = await request.json<{
+		provider?: string; baseUrl?: string; apiKey?: string; model?: string; version?: string; query?: string;
+		aliAccessKeyId?: string; nlsAppKey?: string; lyBlueBearerToken?: string; lyBlueOaid?: string;
+	}>();
+	if (!body.provider) {
+		return json({ error: "provider is required" }, 400);
+	}
+	if (body.provider !== "alinls" && (!body.baseUrl || !body.apiKey)) {
+		return json({ error: "baseUrl and apiKey are required" }, 400);
 	}
 
-	const result = await runTest(body.provider, body.baseUrl, body.apiKey, body.model, body.version, body.query);
+	const result = await runTest(body.provider, body.baseUrl ?? "", body.apiKey ?? "", body.model, body.version, body.query, {
+		aliAccessKeyId: body.aliAccessKeyId,
+		apiKey: body.apiKey,
+		nlsAppKey: body.nlsAppKey,
+		lyBlueBearerToken: body.lyBlueBearerToken,
+		lyBlueOaid: body.lyBlueOaid,
+	});
 	return json(result);
 }
 
@@ -396,7 +509,13 @@ async function testBatch(request: Request, env: Env): Promise<Response> {
 
 	const results = await Promise.all(
 		enabledEndpoints.map(async (ep) => {
-			const result = await runTest(body.provider!, ep.baseUrl, ep.apiKey, ep.model, ep.version, ep.query);
+			const result = await runTest(body.provider!, ep.baseUrl, ep.apiKey, ep.model, ep.version, ep.query, {
+				aliAccessKeyId: ep.aliAccessKeyId,
+				apiKey: ep.apiKey,
+				nlsAppKey: ep.nlsAppKey,
+				lyBlueBearerToken: ep.lyBlueBearerToken,
+				lyBlueOaid: ep.lyBlueOaid,
+			});
 			return { baseUrl: ep.baseUrl, ...result };
 		}),
 	);

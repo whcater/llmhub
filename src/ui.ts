@@ -361,6 +361,7 @@ header .logout:hover { color: ${COLORS.primary}; }
 		<a href="#openai">OpenAI</a>
 		<a href="#gemini">Gemini</a>
 		<a href="#grok">Grok</a>
+		<a href="#alinls">Alinls</a>
 		<a href="#logs">Logs</a>
 		<a href="#commands">Commands</a>
 	</nav>
@@ -562,6 +563,7 @@ function renderProviders() {
 	for (const name of ['anthropic','openai','gemini','grok']) {
 		c.appendChild(buildCard(name, providerData[name] || []));
 	}
+	c.appendChild(buildAlinlsCard(providerData['alinls'] || []));
 }
 
 function buildCard(name, endpoints) {
@@ -850,6 +852,199 @@ function renderEndpoints(name, card, endpoints) {
 
 function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 
+function buildAlinlsCard(endpoints) {
+	const name = 'alinls';
+	const card = document.createElement('div');
+	card.className = 'provider-card';
+	card.id = name;
+	card.innerHTML = '<h2>' + name + ' <span style="font-size:0.7rem;color:#8892b0;font-weight:400;">(Aliyun NLS — /asr/transcribe + /asr/stream)</span></h2>'
+		+ '<div class="add-form">'
+		+ '  <div class="field"><label>Base URL</label><input type="url" placeholder="https://nls-gateway.cn-shanghai.aliyuncs.com" data-url></div>'
+		+ '  <div class="field"><label>Ali AccessKey ID</label><input type="text" placeholder="LTAI..." data-ali-ak></div>'
+		+ '  <div class="field"><label>Ali Secret (SK)</label><input type="text" placeholder="aliyun SK" data-key></div>'
+		+ '  <div class="field"><label>NLS AppKey</label><input type="text" placeholder="appkey" data-nls-appkey></div>'
+		+ '  <div class="field"><label>ly-blue Bearer</label><input type="text" placeholder="optional" data-ly-bearer></div>'
+		+ '  <div class="field"><label>ly-blue OAID</label><input type="text" placeholder="optional" data-ly-oaid></div>'
+		+ '  <div class="field"><label>Note</label><input type="text" placeholder="desc" data-note></div>'
+		+ '  <button class="btn-sm btn-primary add-btn">Add</button>'
+		+ '</div>'
+		+ '<div class="ep-list" data-list></div>'
+		+ '<div class="batch-bar">'
+		+ '  <button class="btn-sm btn-success batch-btn">Test All</button>'
+		+ '  <span class="test-indicator batch-result" data-batch></span>'
+		+ '</div>';
+
+	card.querySelector('.add-btn').addEventListener('click', () => {
+		const url = card.querySelector('[data-url]').value.trim();
+		const ak = card.querySelector('[data-ali-ak]').value.trim();
+		const sk = card.querySelector('[data-key]').value.trim();
+		const appKey = card.querySelector('[data-nls-appkey]').value.trim();
+		const lyB = card.querySelector('[data-ly-bearer]').value.trim();
+		const lyO = card.querySelector('[data-ly-oaid]').value.trim();
+		const note = card.querySelector('[data-note]').value.trim();
+		if (!url) return;
+		// 至少需要一组凭证
+		const hasAk = ak && sk && appKey;
+		const hasLy = lyB && lyO;
+		if (!hasAk && !hasLy) {
+			alert('Need either AK+SK+AppKey or lyBlue Bearer+OAID');
+			return;
+		}
+		providerData[name] = providerData[name] || [];
+		providerData[name].push({
+			baseUrl: url, apiKey: sk, enabled: true,
+			aliAccessKeyId: ak || undefined,
+			nlsAppKey: appKey || undefined,
+			lyBlueBearerToken: lyB || undefined,
+			lyBlueOaid: lyO || undefined,
+			note: note || undefined,
+		});
+		['data-url','data-ali-ak','data-key','data-nls-appkey','data-ly-bearer','data-ly-oaid','data-note']
+			.forEach(s => { const el = card.querySelector('[' + s + ']'); if (el) el.value = ''; });
+		saveProvider(name);
+	});
+
+	card.querySelector('.batch-btn').addEventListener('click', () => batchTest(name, card));
+
+	renderAlinlsEndpoints(card, endpoints);
+	return card;
+}
+
+function renderAlinlsEndpoints(card, endpoints) {
+	const name = 'alinls';
+	const list = card.querySelector('[data-list]');
+	list.innerHTML = '';
+	if (!endpoints.length) { list.innerHTML = '<div class="no-ep">No endpoints configured</div>'; return; }
+
+	const header = document.createElement('div');
+	header.className = 'ep-header';
+	header.innerHTML =
+		'<input type="checkbox" data-select-all' + (endpoints.every(ep => ep.enabled) ? ' checked' : '') + '>'
+		+ '<span class="header-label">Base URL</span>'
+		+ '<span class="header-label">AK</span>'
+		+ '<span class="header-label">SK</span>'
+		+ '<span class="header-label">AppKey</span>'
+		+ '<span class="header-label">ly-blue</span>'
+		+ '<span class="header-label">Note</span>';
+	list.appendChild(header);
+
+	header.querySelector('[data-select-all]').addEventListener('change', e => {
+		const checked = e.target.checked;
+		endpoints.forEach((_ep, i) => { providerData[name][i].enabled = checked; });
+		saveProvider(name);
+		renderAlinlsEndpoints(card, providerData[name] || []);
+	});
+
+	endpoints.forEach((ep, i) => {
+		const row = document.createElement('div');
+		row.className = 'ep-row';
+		const akView = ep.aliAccessKeyId ? mask(ep.aliAccessKeyId, 6, 4) : '(none)';
+		const skView = ep.apiKey ? mask(ep.apiKey, 4, 2) : '(none)';
+		const appKeyView = ep.nlsAppKey ? mask(ep.nlsAppKey, 6, 0) : '(none)';
+		const lyView = (ep.lyBlueBearerToken && ep.lyBlueOaid) ? 'set' : (ep.lyBlueOaid ? 'oaid-only' : '(none)');
+		const noteDisplay = ep.note ? '<span class="note" title="' + esc(ep.note) + '">' + esc(ep.note) + '</span>' : '<span class="note"></span>';
+		row.innerHTML =
+			'<input type="checkbox"' + (ep.enabled ? ' checked' : '') + ' data-toggle>'
+			+ '<span class="mono url" title="' + esc(ep.baseUrl) + '">' + esc(mask(ep.baseUrl, 30)) + '</span>'
+			+ '<span class="mono key" title="Ali AccessKey ID">' + esc(akView) + '</span>'
+			+ '<span class="mono key" title="Ali Secret">' + esc(skView) + '</span>'
+			+ '<span class="mono key" title="NLS AppKey">' + esc(appKeyView) + '</span>'
+			+ '<span class="mono key" title="ly-blue Bearer + OAID">' + esc(lyView) + '</span>'
+			+ noteDisplay
+			+ '<span class="test-indicator" data-ti></span>'
+			+ '<div class="actions">'
+			+ '  <button class="btn-sm btn-success test-one">Test</button>'
+			+ '  <button class="btn-sm btn-outline edit-btn">Edit</button>'
+			+ '  <button class="btn-sm btn-danger del-btn">&times;</button>'
+			+ '</div>';
+
+		row.querySelector('[data-toggle]').addEventListener('change', e => {
+			providerData[name][i].enabled = e.target.checked;
+			saveProvider(name);
+		});
+		row.querySelector('.del-btn').addEventListener('click', () => {
+			if (!confirm('Delete this endpoint?')) return;
+			providerData[name].splice(i, 1);
+			saveProvider(name);
+		});
+		row.querySelector('.test-one').addEventListener('click', () => testOneAlinls(ep, row.querySelector('[data-ti]')));
+
+		row.querySelector('.edit-btn').addEventListener('click', () => {
+			// 行内编辑 7 个字段 (baseUrl/ak/sk/appkey/lyB/lyO/note)
+			const fields = [
+				['baseUrl', ep.baseUrl || '', 'Base URL'],
+				['aliAccessKeyId', ep.aliAccessKeyId || '', 'AK'],
+				['apiKey', ep.apiKey || '', 'SK'],
+				['nlsAppKey', ep.nlsAppKey || '', 'AppKey'],
+				['lyBlueBearerToken', ep.lyBlueBearerToken || '', 'ly-Bearer'],
+				['lyBlueOaid', ep.lyBlueOaid || '', 'ly-OAID'],
+				['note', ep.note || '', 'Note'],
+			];
+			row.innerHTML = '';
+			const inputs = {};
+			fields.forEach(([k, v, ph]) => {
+				const inp = document.createElement('input');
+				inp.type = 'text';
+				inp.className = 'edit-input edit-key';
+				inp.style.flex = '1';
+				inp.style.minWidth = '90px';
+				inp.placeholder = ph;
+				inp.value = v;
+				inputs[k] = inp;
+				row.appendChild(inp);
+			});
+			const actions = document.createElement('div');
+			actions.className = 'actions';
+			actions.innerHTML = '<button class="btn-sm btn-primary save-btn">Save</button><button class="btn-sm btn-outline cancel-btn">Cancel</button>';
+			row.appendChild(actions);
+			actions.querySelector('.save-btn').addEventListener('click', () => {
+				const next = providerData[name][i];
+				next.baseUrl = inputs.baseUrl.value.trim() || next.baseUrl;
+				next.aliAccessKeyId = inputs.aliAccessKeyId.value.trim() || undefined;
+				next.apiKey = inputs.apiKey.value.trim();
+				next.nlsAppKey = inputs.nlsAppKey.value.trim() || undefined;
+				next.lyBlueBearerToken = inputs.lyBlueBearerToken.value.trim() || undefined;
+				next.lyBlueOaid = inputs.lyBlueOaid.value.trim() || undefined;
+				next.note = inputs.note.value.trim() || undefined;
+				saveProvider(name);
+			});
+			actions.querySelector('.cancel-btn').addEventListener('click', () => {
+				renderAlinlsEndpoints(card, providerData[name] || []);
+			});
+		});
+
+		list.appendChild(row);
+	});
+}
+
+async function testOneAlinls(ep, indicator) {
+	indicator.textContent = '...';
+	indicator.className = 'test-indicator loading';
+	const start = performance.now();
+	try {
+		const r = await api('/test', {
+			method: 'POST',
+			body: JSON.stringify({
+				provider: 'alinls',
+				baseUrl: ep.baseUrl,
+				apiKey: ep.apiKey,
+				aliAccessKeyId: ep.aliAccessKeyId,
+				nlsAppKey: ep.nlsAppKey,
+				lyBlueBearerToken: ep.lyBlueBearerToken,
+				lyBlueOaid: ep.lyBlueOaid,
+			}),
+		});
+		const ms = Math.round(performance.now() - start);
+		if (!r) return;
+		const d = await r.json();
+		if (r.ok && d.success !== false) { indicator.textContent = ms + 'ms'; indicator.className = 'test-indicator ok'; }
+		else { indicator.textContent = d.error || 'fail'; indicator.className = 'test-indicator fail'; indicator.title = d.error || ''; }
+	} catch {
+		indicator.textContent = 'error';
+		indicator.className = 'test-indicator fail';
+	}
+}
+
 function downloadJson(filename, data) {
 	const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
 	const url = URL.createObjectURL(blob);
@@ -950,7 +1145,8 @@ async function batchTest(name, card) {
 	batchResult.className = 'test-indicator loading';
 
 	let ok = 0, fail = 0;
-	const promises = eps.map((ep, i) => testOne(name, ep, indicators[i]).then(() => {
+	const runner = (ep, ind) => name === 'alinls' ? testOneAlinls(ep, ind) : testOne(name, ep, ind);
+	const promises = eps.map((ep, i) => runner(ep, indicators[i]).then(() => {
 		if (indicators[i].classList.contains('ok')) ok++; else fail++;
 	}));
 	await Promise.all(promises);

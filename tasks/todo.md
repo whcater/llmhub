@@ -123,15 +123,35 @@ curl -X POST http://localhost:8787/asr/transcribe?lang=0 -H "Authorization: Bear
 
 ## Sprint 2 — 后端 WSS: `/asr/stream` + Admin UI 补全
 
-(S1 positive 验收后展开,关键点:)
-- `handleAsrStream` (asr.ts) — `WebSocketPair` 接客户端 + `fetch{Upgrade:websocket}` 拨上游 + 双向桥接
-- StartTranscription 注入 appKey,客户端只发音频和 stop 控制帧
-- Admin UI alinls tab(独立 `buildAlinlsCard` 函数)
-- `testEndpoint` 加 alinls case(用 0.5s 静音 PCM 调 FlashRecognizer)
+- [x] `handleAsrStream` (asr.ts) — `WebSocketPair` 接客户端 + `fetch{Upgrade:websocket}` 拨上游 + 双向桥接
+- [x] StartTranscription 注入 appKey,客户端只发音频和 stop 控制帧
+- [x] WS 鉴权 `verifyWsToken`:接受 `Authorization: Bearer` 或 `?token=`(WS 升级带不了自定义 header),常量时间比较
+- [x] 桥接计数 + close 日志:bytesIn/bytesOut/sentenceCount,双向 close/error 互相传播
+- [x] Admin UI alinls tab(独立 `buildAlinlsCard` 函数)
+- [x] `testEndpoint` 加 alinls case
+- [x] `src/index.ts` router 加 `/asr/stream` 分支
+
+### 验收 (S2)
+
+- [x] `npx tsc --noEmit` 零错
+- [x] `wrangler dev` 启动 OK;**negative path 全通**:
+  - `GET /asr/stream` (无 upgrade) → `426`
+  - `POST /asr/stream` (无 upgrade) → `426`
+  - WS 无 token → `401`
+  - WS 错 token → `403`
+- [ ] **positive path 需 ly-blue 真凭证 + wscat**:用户跑(SOP 同 S1,WS 用 `wscat -c "ws://localhost:8787/asr/stream?token=$TOKEN"`,发 StartTranscription 帧 + 音频二进制帧)
+
+### Review (S2)
+
+**完成**:`/asr/stream` WSS 双向隧道全链路。客户端 WS 接入 → 鉴权 → 选 alinls endpoint → 取 NLS token → `fetch{Upgrade:websocket}` 拨 nls-gateway → 桥接。appKey 由网关在 StartTranscription 控制帧注入,客户端无需持有 AppKey。Admin UI 补了独立 `buildAlinlsCard` + `testEndpoint` 的 alinls case。tsc 零错,4 个 negative path 全通。
+
+**未做(按 brief)**:positive path 需真实 ly-blue 凭证 + wscat,留给用户跑。
+
+**踩坑**:WS 升级请求无法带自定义 header,所以 `verifyWsToken` 额外接受 `?token=` 查询参数;上游拨号失败时仍返回 101 + 已 close 的 client socket(而非 5xx),因为此时 HTTP 响应头已无法再改。
 
 ## Sprint 3 — Tauri 客户端 (Windows 实时字幕 MVP)
 
-(S2 验收后展开)
+(进行中 — 仓库放在根目录新文件夹)
 
 ---
 
