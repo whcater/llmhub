@@ -8,11 +8,68 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{Device, SampleFormat};
 use serde::Serialize;
+use std::fs::File;
+use std::io::{Seek, SeekFrom, Write};
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::Receiver;
+use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc::UnboundedSender;
 
 const TARGET_RATE: u32 = 16000;
 const CHUNK_SAMPLES: usize = TARGET_RATE as usize / 5; // 200ms = 3200 samples
+
+type SharedSink = Arc<Mutex<Option<WavSink>>>;
+
+/// 16k/mono/16-bit WAV 写入器。先写占位头,流式追加 PCM,finalize 时回填长度。
+struct WavSink {
+    file: File,
+    data_len: u32,
+}
+
+fn wav_header(data_len: u32) -> [u8; 44] {
+    let sample_rate: u32 = TARGET_RATE;
+    let channels: u16 = 1;
+    let bits: u16 = 16;
+    let byte_rate = sample_rate * channels as u32 * bits as u32 / 8;
+    let block_align = channels * bits / 8;
+    let mut h = [0u8; 44];
+    h[0..4].copy_from_slice(b"RIFF");
+    h[4..8].copy_from_slice(&(36 + data_len).to_le_bytes());
+    h[8..12].copy_from_slice(b"WAVE");
+    h[12..16].copy_from_slice(b"fmt ");
+    h[16..20].copy_from_slice(&16u32.to_le_bytes());
+    h[20..22].copy_from_slice(&1u16.to_le_bytes()); // PCM
+    h[22..24].copy_from_slice(&channels.to_le_bytes());
+    h[24..28].copy_from_slice(&sample_rate.to_le_bytes());
+    h[28..32].copy_from_slice(&byte_rate.to_le_bytes());
+    h[32..34].copy_from_slice(&block_align.to_le_bytes());
+    h[34..36].copy_from_slice(&bits.to_le_bytes());
+    h[36..40].copy_from_slice(b"data");
+    h[40..44].copy_from_slice(&data_len.to_le_bytes());
+    h
+}
+
+impl WavSink {
+    fn create(path: &Path) -> std::io::Result<Self> {
+        let mut file = File::create(path)?;
+        file.write_all(&wav_header(0))?;
+        Ok(Self { file, data_len: 0 })
+    }
+
+    fn write(&mut self, pcm: &[u8]) -> std::io::Result<()> {
+        self.file.write_all(pcm)?;
+        self.data_len = self.data_len.saturating_add(pcm.len() as u32);
+        Ok(())
+    }
+
+    fn finalize(mut self) -> std::io::Result<()> {
+        self.file.seek(SeekFrom::Start(4))?;
+        self.file.write_all(&(36 + self.data_len).to_le_bytes())?;
+        self.file.seek(SeekFrom::Start(40))?;
+        self.file.write_all(&self.data_len.to_le_bytes())?;
+        self.file.flush()
+    }
+}
 
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -151,16 +208,23 @@ struct Proc {
     mono: Vec<f32>,
     acc: Vec<i16>,
     tx: UnboundedSender<Vec<u8>>,
+    sink: Option<SharedSink>,
 }
 
 impl Proc {
-    fn new(src_rate: u32, channels: usize, tx: UnboundedSender<Vec<u8>>) -> Self {
+    fn new(
+        src_rate: u32,
+        channels: usize,
+        tx: UnboundedSender<Vec<u8>>,
+        sink: Option<SharedSink>,
+    ) -> Self {
         Self {
             resampler: LinearResampler::new(src_rate),
             channels,
             mono: Vec::new(),
             acc: Vec::new(),
             tx,
+            sink,
         }
     }
 
@@ -174,6 +238,14 @@ impl Proc {
             for v in frame {
                 bytes.extend_from_slice(&v.to_le_bytes());
             }
+            // 录音(若开启):与 WS 上行独立,断线期间也照常落盘
+            if let Some(sink) = &self.sink {
+                if let Ok(mut g) = sink.lock() {
+                    if let Some(w) = g.as_mut() {
+                        let _ = w.write(&bytes);
+                    }
+                }
+            }
             // 接收端断开则忽略(会话已停)
             let _ = self.tx.send(bytes);
         }
@@ -182,11 +254,13 @@ impl Proc {
 
 /// 在调用线程上(应为独立 std::thread)阻塞跑采集,直到 stop_rx 收到信号。
 /// 每凑满 200ms 通过 pcm_tx 推一帧 LE int16 字节。
+/// record_path 非空时,同一份 16k/mono PCM 落盘成 WAV;返回最终保存路径。
 pub fn run_capture(
     device_id: &str,
     pcm_tx: UnboundedSender<Vec<u8>>,
     stop_rx: Receiver<()>,
-) -> Result<(), String> {
+    record_path: Option<PathBuf>,
+) -> Result<Option<PathBuf>, String> {
     let (device, is_loopback) = resolve_device(device_id)?;
 
     // loopback 用 output 设备的默认格式;麦克风用 input 默认格式。两者都用 build_input_stream。
@@ -206,9 +280,17 @@ pub fn run_capture(
         "[audio] dev={device_id} loopback={is_loopback} rate={src_rate} ch={channels} fmt={sample_format:?}"
     );
 
+    let sink: Option<SharedSink> = match record_path {
+        Some(ref p) => {
+            let s = WavSink::create(p).map_err(|e| format!("创建录音文件失败: {e}"))?;
+            Some(Arc::new(Mutex::new(Some(s))))
+        }
+        None => None,
+    };
+
     let stream = match sample_format {
         SampleFormat::F32 => {
-            let mut p = Proc::new(src_rate, channels, pcm_tx.clone());
+            let mut p = Proc::new(src_rate, channels, pcm_tx.clone(), sink.clone());
             device.build_input_stream(
                 &config,
                 move |data: &[f32], _| p.feed(data),
@@ -217,7 +299,7 @@ pub fn run_capture(
             )
         }
         SampleFormat::I16 => {
-            let mut p = Proc::new(src_rate, channels, pcm_tx.clone());
+            let mut p = Proc::new(src_rate, channels, pcm_tx.clone(), sink.clone());
             device.build_input_stream(
                 &config,
                 move |data: &[i16], _| {
@@ -229,7 +311,7 @@ pub fn run_capture(
             )
         }
         SampleFormat::U16 => {
-            let mut p = Proc::new(src_rate, channels, pcm_tx.clone());
+            let mut p = Proc::new(src_rate, channels, pcm_tx.clone(), sink.clone());
             device.build_input_stream(
                 &config,
                 move |data: &[u16], _| {
@@ -249,6 +331,13 @@ pub fn run_capture(
 
     // 阻塞直到收到停止信号(发送端 drop 也会解除阻塞)
     let _ = stop_rx.recv();
-    drop(stream);
-    Ok(())
+    drop(stream); // 确保 callback 不再触发,sink 可独占回填头
+
+    if let Some(arc) = sink {
+        if let Some(w) = arc.lock().unwrap().take() {
+            w.finalize().map_err(|e| format!("保存录音失败: {e}"))?;
+            return Ok(record_path);
+        }
+    }
+    Ok(None)
 }

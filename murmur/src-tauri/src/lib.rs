@@ -5,7 +5,8 @@ mod config;
 use std::sync::mpsc::Sender as StdSender;
 use std::sync::Mutex;
 use std::thread::JoinHandle;
-use tauri::{AppHandle, Emitter, State};
+use std::time::{SystemTime, UNIX_EPOCH};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::watch;
 
 /// 当前会话的控制句柄。
@@ -67,15 +68,39 @@ fn start_session(
     let (audio_stop_tx, audio_stop_rx) = std::sync::mpsc::channel::<()>();
     let (ws_stop_tx, ws_stop_rx) = watch::channel(false);
 
+    // 录音路径(若开启): <appDataDir>/recordings/rec-<unix_ms>.wav
+    let record_path = if cfg.save_recording {
+        let dir = app
+            .path()
+            .app_data_dir()
+            .map_err(|e| format!("取数据目录失败: {e}"))?
+            .join("recordings");
+        std::fs::create_dir_all(&dir).map_err(|e| format!("创建录音目录失败: {e}"))?;
+        let ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0);
+        Some(dir.join(format!("rec-{ms}.wav")))
+    } else {
+        None
+    };
+
     // 采集线程(cpal Stream 非 Send,固定在独立线程上)
     let app_for_audio = app.clone();
     let dev = device.clone();
     let audio_join = std::thread::Builder::new()
         .name("murmur-audio".into())
         .spawn(move || {
-            if let Err(e) = audio::run_capture(&dev, pcm_tx, audio_stop_rx) {
-                log::error!("[audio] {e}");
-                let _ = app_for_audio.emit("asr-status", format!("音频采集失败: {e}"));
+            match audio::run_capture(&dev, pcm_tx, audio_stop_rx, record_path) {
+                Ok(Some(path)) => {
+                    let _ = app_for_audio
+                        .emit("asr-status", format!("录音已保存: {}", path.display()));
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    log::error!("[audio] {e}");
+                    let _ = app_for_audio.emit("asr-status", format!("音频采集失败: {e}"));
+                }
             }
         })
         .map_err(|e| format!("启动采集线程失败: {e}"))?;

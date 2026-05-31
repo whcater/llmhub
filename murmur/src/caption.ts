@@ -30,7 +30,10 @@ async function backToFull() {
   await getCurrentWindow().hide();
 }
 
-box.addEventListener("click", backToFull);
+box.addEventListener("contextmenu", (e) => {
+  e.preventDefault();
+  backToFull();
+});
 window.addEventListener("keydown", (e) => {
   if (e.key === "Escape") backToFull();
 });

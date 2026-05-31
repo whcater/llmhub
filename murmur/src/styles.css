@@ -137,8 +137,9 @@ body.caption {
   font-weight: 700;
   line-height: 1.4;
   text-shadow: 0 2px 4px rgba(0, 0, 0, 0.6);
-  cursor: pointer;
+  cursor: move;
 }
 #caption-box .cap-partial {
   color: var(--partial);
+  pointer-events: none;
 }

@@ -13,6 +13,7 @@ export interface Config {
   authToken: string;
   deviceId: string;
   captionLines: number;
+  saveRecording: boolean;
 }
 
 export const api = {

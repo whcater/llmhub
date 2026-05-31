@@ -20,6 +20,7 @@ const btnSave = $<HTMLButtonElement>("btn-save");
 const deviceSel = $<HTMLSelectElement>("device");
 const serverInput = $<HTMLInputElement>("server-url");
 const tokenInput = $<HTMLInputElement>("auth-token");
+const saveRecCheck = $<HTMLInputElement>("save-recording");
 const statusEl = $<HTMLSpanElement>("status");
 const settingsEl = $<HTMLDivElement>("settings");
 const transcriptEl = $<HTMLDivElement>("transcript");
@@ -116,6 +117,7 @@ btnSave.addEventListener("click", async () => {
   cfg.serverUrl = serverInput.value.trim();
   cfg.authToken = tokenInput.value;
   cfg.deviceId = deviceSel.value;
+  cfg.saveRecording = saveRecCheck.checked;
   await api.saveConfig(cfg);
   settingsEl.classList.remove("open");
   statusEl.textContent = "设置已保存";
@@ -129,6 +131,7 @@ async function init() {
   cfg = await api.getConfig();
   serverInput.value = cfg.serverUrl;
   tokenInput.value = cfg.authToken;
+  saveRecCheck.checked = cfg.saveRecording;
   await loadDevices();
 
   await onPartial((t) => {

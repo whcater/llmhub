@@ -15,6 +15,9 @@ pub struct Config {
     pub device_id: String,
     /// 字幕模式滚动行数
     pub caption_lines: u32,
+    /// 开始会话时把 16k/mono PCM 录成 WAV
+    #[serde(default)]
+    pub save_recording: bool,
 }
 
 impl Default for Config {
@@ -24,6 +27,7 @@ impl Default for Config {
             auth_token: String::new(),
             device_id: String::new(),
             caption_lines: 2,
+            save_recording: false,
         }
     }
 }

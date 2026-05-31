@@ -178,6 +178,10 @@ curl -X POST http://localhost:8787/asr/transcribe?lang=0 -H "Authorization: Bear
 - S5/S6:Mac(SCK)/ Linux(Pulse monitor)音频源
 - auth token 存 OS keychain(当前存 config.json,明文)
 
+### S3 增补(体验)
+- [x] 字幕条可拖拽:`data-tauri-drag-region` + `core:window:allow-start-dragging`;退出改为右键/Esc(左键留给拖拽)。位置在会话内(hide/show)保持
+- [x] 录音落盘:设置勾选"保存录音" → 会话期间把 16k/mono PCM 写成 WAV 到 `<appDataDir>/recordings/rec-<ms>.wav`,停止时回填头并在状态栏提示路径。与 WS 独立,断线期间照常录
+
 ---
 
 ## Review (S1)
