@@ -151,7 +151,32 @@ curl -X POST http://localhost:8787/asr/transcribe?lang=0 -H "Authorization: Bear
 
 ## Sprint 3 — Tauri 客户端 (Windows 实时字幕 MVP)
 
-(进行中 — 仓库放在根目录新文件夹)
+仓库:根目录 `murmur/`(Tauri 2 + Rust + 原生 TS,与 llmhub 解耦)。
+
+### 后端 (src-tauri/src)
+
+- [x] `audio.rs` — cpal:枚举 output(loopback)+input(mic) 设备;独立线程跑采集;f32/i16/u16 → mono → 线性重采样到 16k → 200ms 帧 → channel。loopback 走 output 设备 `default_output_config` + `build_input_stream`
+- [x] `asr.rs` — tokio-tungstenite 连 `ws(s)://<llmhub>/asr/stream?token=`;发 StartTranscription(appkey 留空,worker 注入);转发 PCM binary;解析 TranscriptionResultChanged/SentenceEnd/TaskFailed → emit 事件;指数退避重连(2^n,封顶 15s,6 次)
+- [x] `config.rs` — config.json 持久化到 app config 目录(serverUrl/authToken/deviceId/captionLines)
+- [x] `lib.rs` — 命令 list_devices/get_config/save_config/start_session/stop_session;编排采集线程 + WS 任务;Session 句柄(audio_stop / ws_stop watch / join)
+- [x] `tauri.conf.json` — main 窗口 + caption 窗口(transparent + alwaysOnTop + decorations:false + visible:false);capabilities 授 window show/hide/set-focus
+
+### 前端 (原生 TS + Vite 多页)
+
+- [x] `index.html` + `main.ts` — 全文模式:设备选择/开始停止/字幕模式/复制/清空/设置(serverUrl+token);句子+partial 渲染;listen 三事件
+- [x] `caption.html` + `caption.ts` — 透明字幕条:末 N 句 + partial,点击/Esc 返回全文
+- [x] `ipc.ts` — invoke 封装 + 事件监听
+
+### 验收 (S3)
+
+- [x] `npm run build`(tsc + vite)零错
+- [x] `cargo check` 零错零警告(首次编译 ~9min:tauri/wry/windows crate)
+- [ ] **positive path(用户跑)**:`cargo tauri dev` → 设置填 ws 地址 + token → 选默认输出(loopback)→ 播视频 → 3 秒内出字幕;断网 5s 自动重连
+
+### 待办 / 后续 Sprint
+- S4:短音频 REST(拖 mp3)+ 长音频客户端切片
+- S5/S6:Mac(SCK)/ Linux(Pulse monitor)音频源
+- auth token 存 OS keychain(当前存 config.json,明文)
 
 ---
 
