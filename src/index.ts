@@ -390,7 +390,7 @@ async function handleProxy(
 
 			// Success or final attempt — log and return
 			let responseBody: any = undefined;
-			let clientBody: ReadableStream<Uint8Array> | null = upstream.body;
+			let clientBody: BodyInit | null = upstream.body;
 			let logBranch: ReadableStream<Uint8Array> | null = null;
 			const _ctRes = upstream.headers.get('content-type') || '';
 			const _isStreamRes = _ctRes.includes('event-stream');
@@ -401,8 +401,13 @@ async function handleProxy(
 				clientBody = a;
 				logBranch = b;
 			} else if (!_isStreamRes) {
-				const clonedResponse = upstream.clone();
-				try { responseBody = await clonedResponse.json(); } catch { }
+				// Read the body once; reuse the text both for logging and as the
+				// client response body. Cloning + reading the clone disturbs the
+				// original stream in the Workers runtime, which would make the
+				// `new Response(upstream.body, ...)` below throw.
+				const text = await upstream.text();
+				clientBody = text;
+				try { responseBody = JSON.parse(text); } catch { }
 			}
 			if(responseBody) console.log(responseBody);
 
@@ -427,10 +432,20 @@ async function handleProxy(
 			}
 
 
+			// When we buffered the body into text, the original Content-Length /
+			// Content-Encoding may no longer describe the (decoded) body. Drop them
+			// and let the runtime recompute, otherwise the client may see a length
+			// mismatch or a decode error.
+			const respHeaders = new Headers(upstream.headers);
+			if (typeof clientBody === "string") {
+				respHeaders.delete("content-length");
+				respHeaders.delete("content-encoding");
+			}
+
 			return new Response(clientBody, {
 				status: upstream.status,
 				statusText: upstream.statusText,
-				headers: upstream.headers,
+				headers: respHeaders,
 			});
 		} catch (err: unknown) {
 			const message = err instanceof Error ? err.message : "Unknown error";
