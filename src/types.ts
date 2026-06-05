@@ -2,6 +2,23 @@ export interface Env {
 	LLMHUB_KV: KVNamespace;
 }
 
+// A single hit rule evaluated against the incoming request.
+export interface MatchRule {
+	source: "query" | "header"; // where to read the actual value from
+	key: string;                // query param name or header name
+	op: "eq" | "ne" | "gt" | "gte" | "lt" | "lte" | "contains" | "exists";
+	value?: string | number;    // expected value (not needed for "exists")
+}
+
+// Per-endpoint custom settings. Known keys are interpreted by the proxy;
+// unknown keys are preserved verbatim so the schema can grow without code changes.
+export interface EndpointSettings {
+	headers?: Record<string, string>; // fixed headers injected into upstream request (override client)
+	match?: "and" | "or";             // how to combine rules; default "and"
+	rules?: MatchRule[];              // hit rules gating endpoint selection
+	[key: string]: unknown;           // freeform extension point
+}
+
 export interface Endpoint {
 	baseUrl: string;
 	version?: string; // API version segment, defaults to "v1"; rewrites client's version when mismatched
@@ -11,6 +28,7 @@ export interface Endpoint {
 	weight?: number; // for weighted strategy, default 1
 	model?: string; // optional model name, if set will override request body model
 	note?: string; // optional note to distinguish similar configs
+	settings?: EndpointSettings; // optional custom config: fixed headers, hit rules, etc.
 
 	// ── alinls-only optional fields ───────────────────────────────
 	// For provider="alinls": `apiKey` holds aliAccessKeySecret.

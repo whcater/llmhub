@@ -1,4 +1,4 @@
-import type { Env, Endpoint, ProviderConfig, ProviderName, SelectionStrategy } from "./types";
+import type { Env, Endpoint, MatchRule, ProviderConfig, ProviderName, SelectionStrategy } from "./types";
 import { SUPPORTED_PROVIDERS, DEFAULT_STRATEGY, DEFAULT_VERSION } from "./types";
 import { handleAdmin } from "./admin";
 import { handleAsrTranscribe, handleAsrStream } from "./asr";
@@ -106,12 +106,60 @@ export interface EndpointSelection {
 	strategy: SelectionStrategy;
 }
 
-export async function selectEndpoint(provider: ProviderName, env: Env): Promise<EndpointSelection | null> {
+// Context extracted from the incoming request, used to evaluate hit rules.
+export interface MatchContext {
+	query: URLSearchParams;
+	headers: Headers;
+}
+
+function evaluateRule(rule: MatchRule, ctx: MatchContext): boolean {
+	const actual = rule.source === "query"
+		? ctx.query.get(rule.key)
+		: ctx.headers.get(rule.key);
+
+	if (rule.op === "exists") return actual != null;
+	if (actual == null) return false;
+
+	switch (rule.op) {
+		case "eq": return actual === String(rule.value);
+		case "ne": return actual !== String(rule.value);
+		case "contains": return actual.includes(String(rule.value));
+		case "gt":
+		case "gte":
+		case "lt":
+		case "lte": {
+			const a = Number(actual);
+			const b = Number(rule.value);
+			if (Number.isNaN(a) || Number.isNaN(b)) return false;
+			if (rule.op === "gt") return a > b;
+			if (rule.op === "gte") return a >= b;
+			if (rule.op === "lt") return a < b;
+			return a <= b; // lte
+		}
+		default: return false;
+	}
+}
+
+// An endpoint is a candidate when it has no rules, or its rules match the
+// request per the configured combine mode ("and" by default, or "or").
+function endpointMatches(endpoint: Endpoint, ctx?: MatchContext): boolean {
+	const rules = endpoint.settings?.rules;
+	if (!rules || rules.length === 0) return true;
+	if (!ctx) return true; // no request context (e.g. legacy callers) — don't gate
+	const mode = endpoint.settings?.match === "or" ? "or" : "and";
+	return mode === "or"
+		? rules.some((r) => evaluateRule(r, ctx))
+		: rules.every((r) => evaluateRule(r, ctx));
+}
+
+export async function selectEndpoint(provider: ProviderName, env: Env, ctx?: MatchContext): Promise<EndpointSelection | null> {
 	const raw = await env.LLMHUB_KV.get(`provider:${provider}`);
 	if (!raw) return null;
 
 	const config: ProviderConfig = JSON.parse(raw);
-	const enabled = config.endpoints.filter((e) => e.enabled);
+	const enabled = config.endpoints
+		.filter((e) => e.enabled)
+		.filter((e) => endpointMatches(e, ctx));
 	if (enabled.length === 0) return null;
 
 	const strategy = config.strategy ?? DEFAULT_STRATEGY;
@@ -244,6 +292,14 @@ function buildUpstreamRequest(
 		}
 	}
 
+	// Inject configured fixed headers last so they override client-supplied values.
+	const fixedHeaders = endpoint.settings?.headers;
+	if (fixedHeaders && typeof fixedHeaders === "object") {
+		for (const [k, v] of Object.entries(fixedHeaders)) {
+			if (typeof v === "string") headers.set(k, v);
+		}
+	}
+
 	const body =
 		request.method !== "GET" && request.method !== "HEAD" ? request.body : undefined;
 
@@ -317,7 +373,11 @@ async function handleProxy(
 	}
 
 	// Endpoint selection
-	const selection = await selectEndpoint(provider, env);
+	const reqUrl = new URL(request.url);
+	const selection = await selectEndpoint(provider, env, {
+		query: reqUrl.searchParams,
+		headers: request.headers,
+	});
 	if (!selection) {
 		const errBody = { error: `No available endpoint for provider: ${provider}` };
 		logEarlyResponse(503, errBody);

@@ -347,6 +347,40 @@ header .logout:hover { color: ${COLORS.primary}; }
 	font-family: inherit;
 }
 .cmd-popup-item:hover { background: ${COLORS.accent}; color: ${COLORS.text}; }
+
+/* Settings Drawer */
+.drawer-overlay {
+	display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.55); z-index: 1500;
+}
+.drawer-overlay.active { display: block; }
+.drawer {
+	position: fixed; top: 0; right: 0; height: 100vh; width: 520px; max-width: 94vw;
+	background: ${COLORS.card}; border-left: 1px solid ${COLORS.border}; z-index: 1600;
+	transform: translateX(100%); transition: transform 0.25s ease;
+	display: flex; flex-direction: column; padding: 1.25rem 1.5rem; overflow-y: auto;
+}
+.drawer.active { transform: translateX(0); }
+.drawer-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75rem; }
+.drawer-head h2 { font-size: 1rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.drawer-close { color: ${COLORS.textDim}; font-size: 1.2rem; background: transparent; line-height: 1; padding: 0.2rem 0.4rem; }
+.drawer-close:hover { color: ${COLORS.primary}; }
+.drawer-row { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.6rem; }
+.drawer-row .lbl { font-size: 0.8rem; color: ${COLORS.textDim}; font-weight: 500; }
+.seg { display: inline-flex; border: 1px solid ${COLORS.border}; border-radius: 6px; overflow: hidden; }
+.seg button { padding: 0.3rem 0.8rem; background: transparent; color: ${COLORS.textDim}; font-size: 0.78rem; }
+.seg button.active { background: ${COLORS.primary}; color: #fff; }
+.drawer-hint {
+	font-size: 0.72rem; color: ${COLORS.textDim}; line-height: 1.5; background: ${COLORS.input};
+	border: 1px solid ${COLORS.border}; border-radius: 6px; padding: 0.6rem 0.75rem; margin-bottom: 0.6rem;
+}
+.drawer-hint code { color: ${COLORS.primary}; font-family: 'SF Mono','Fira Code',monospace; }
+.drawer textarea {
+	width: 100%; flex: 1; min-height: 280px; font-family: 'SF Mono','Fira Code',monospace; font-size: 0.8rem;
+	background: ${COLORS.input}; color: ${COLORS.text}; border: 1px solid ${COLORS.border};
+	border-radius: 8px; padding: 0.75rem; outline: none; resize: vertical; line-height: 1.5;
+}
+.drawer textarea:focus { border-color: ${COLORS.primary}; }
+.drawer-footer { display: flex; gap: 0.5rem; margin-top: 0.75rem; }
 </style>
 </head>
 <body>
@@ -448,6 +482,36 @@ header .logout:hover { color: ${COLORS.primary}; }
 	<div class="fullscreen-hint">Press ESC to exit fullscreen</div>
 	<div class="log-viewer" id="logViewerFullscreen">
 		<div class="log-empty">No log selected</div>
+	</div>
+</div>
+
+<!-- Endpoint Settings Drawer -->
+<div class="drawer-overlay" id="drawerOverlay"></div>
+<div class="drawer" id="settingsDrawer">
+	<div class="drawer-head">
+		<h2 id="drawerTitle">Endpoint Settings</h2>
+		<button class="drawer-close" id="drawerClose">&times;</button>
+	</div>
+	<div class="drawer-row">
+		<span class="lbl">Rules match</span>
+		<div class="seg" id="matchSeg">
+			<button type="button" data-match="and">AND</button>
+			<button type="button" data-match="or">OR</button>
+		</div>
+		<span class="strategy-hint">AND = all rules must pass · OR = any rule passes</span>
+	</div>
+	<div class="drawer-hint">
+		Custom JSON config. Recognized keys:<br>
+		• <code>headers</code>: <code>{"X-Foo":"bar"}</code> — fixed headers injected into the upstream request (override client values).<br>
+		• <code>match</code>: <code>"and"</code> | <code>"or"</code> — how rules combine (synced with the toggle above).<br>
+		• <code>rules</code>: <code>[{"source":"query"|"header","key":"...","op":"...","value":...}]</code> — endpoint is used only when rules match, else it's skipped (503 if none match). op: <code>eq, ne, gt, gte, lt, lte, contains, exists</code>.<br>
+		Unknown keys are preserved for future use.
+	</div>
+	<textarea id="settingsJson" spellcheck="false"></textarea>
+	<div class="msg" id="settingsMsg"></div>
+	<div class="drawer-footer">
+		<button class="btn-sm btn-primary" id="settingsSave">Save</button>
+		<button class="btn-sm btn-outline" id="settingsCancel">Cancel</button>
 	</div>
 </div>
 
@@ -687,6 +751,7 @@ function renderEndpoints(name, card, endpoints) {
 	endpoints.forEach((ep, i) => {
 		const row = document.createElement('div');
 		row.className = 'ep-row';
+		const hasSettings = ep.settings && Object.keys(ep.settings).length > 0;
 		const modelDisplay = ep.model ? '<span class="mono model" title="Model: ' + esc(ep.model) + '">' + esc(ep.model.slice(0, 12)) + '</span>' : '';
 		const noteDisplay = ep.note ? '<span class="note" title="' + esc(ep.note) + '">' + esc(ep.note) + '</span>' : '';
 		const queryDisplay = ep.query ? '<span class="mono qry" title="Query: ' + esc(ep.query) + '">?' + esc(ep.query) + '</span>' : '';
@@ -704,6 +769,7 @@ function renderEndpoints(name, card, endpoints) {
 			+ '  <button class="btn-sm btn-success test-one">Test</button>'
 			+ '  <div class="cmd-popup-wrap"><button class="btn-sm btn-outline cmd-row-btn">Cmd</button><div class="cmd-popup"><button class="cmd-popup-item" data-platform="mac">Mac / Linux</button><button class="cmd-popup-item" data-platform="win">Windows</button></div></div>'
 			+ '  <button class="btn-sm btn-outline edit-btn">Edit</button>'
+			+ '  <button class="btn-sm ' + (hasSettings ? 'btn-primary' : 'btn-outline') + ' settings-btn" title="Custom settings (headers, rules)">Set</button>'
 			+ '  <button class="btn-sm btn-danger del-btn">&times;</button>'
 			+ '</div>';
 
@@ -725,6 +791,7 @@ function renderEndpoints(name, card, endpoints) {
 			saveProvider(name);
 		});
 		row.querySelector('.test-one').addEventListener('click', () => testOne(name, ep, row.querySelector('[data-ti]')));
+		row.querySelector('.settings-btn').addEventListener('click', () => openSettingsDrawer(name, i));
 
 		const cmdRowBtn = row.querySelector('.cmd-row-btn');
 		const cmdPopup = row.querySelector('.cmd-popup');
@@ -1185,6 +1252,78 @@ function renderQuickCommands() {
 		});
 	});
 }
+
+// ── Endpoint Settings Drawer ────────────────
+let settingsTarget = null;
+const settingsDrawer = document.getElementById('settingsDrawer');
+const drawerOverlay = document.getElementById('drawerOverlay');
+const settingsTextarea = document.getElementById('settingsJson');
+const settingsMsg = document.getElementById('settingsMsg');
+
+function setSettingsMsg(text, ok) {
+	settingsMsg.textContent = text || '';
+	settingsMsg.className = 'msg' + (text ? (ok ? ' ok' : ' fail') : '');
+}
+
+function syncMatchButtons() {
+	let mode = 'and';
+	try { const o = JSON.parse(settingsTextarea.value || '{}'); if (o && o.match === 'or') mode = 'or'; } catch {}
+	document.querySelectorAll('#matchSeg [data-match]').forEach(b => b.classList.toggle('active', b.dataset.match === mode));
+}
+
+function openSettingsDrawer(name, i) {
+	settingsTarget = { name, i };
+	const ep = providerData[name][i];
+	const current = (ep.settings && Object.keys(ep.settings).length)
+		? ep.settings
+		: { headers: {}, match: 'and', rules: [] };
+	settingsTextarea.value = JSON.stringify(current, null, 2);
+	document.getElementById('drawerTitle').textContent = 'Settings — ' + mask(ep.baseUrl, 28);
+	setSettingsMsg('');
+	syncMatchButtons();
+	drawerOverlay.classList.add('active');
+	settingsDrawer.classList.add('active');
+}
+
+function closeSettingsDrawer() {
+	settingsDrawer.classList.remove('active');
+	drawerOverlay.classList.remove('active');
+	settingsTarget = null;
+}
+
+function setMatchMode(mode) {
+	let o;
+	try { o = JSON.parse(settingsTextarea.value || '{}'); }
+	catch { setSettingsMsg('Fix JSON before toggling match mode', false); return; }
+	if (!o || typeof o !== 'object' || Array.isArray(o)) o = {};
+	o.match = mode;
+	settingsTextarea.value = JSON.stringify(o, null, 2);
+	setSettingsMsg('');
+	syncMatchButtons();
+}
+
+function saveSettings() {
+	if (!settingsTarget) return;
+	let parsed;
+	try { parsed = JSON.parse(settingsTextarea.value || '{}'); }
+	catch (e) { setSettingsMsg('Invalid JSON: ' + e.message, false); return; }
+	if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+		setSettingsMsg('Settings must be a JSON object', false); return;
+	}
+	const { name, i } = settingsTarget;
+	providerData[name][i].settings = Object.keys(parsed).length ? parsed : undefined;
+	closeSettingsDrawer();
+	saveProvider(name);
+}
+
+document.querySelectorAll('#matchSeg [data-match]').forEach(b => {
+	b.addEventListener('click', () => setMatchMode(b.dataset.match));
+});
+settingsTextarea.addEventListener('input', () => { setSettingsMsg(''); syncMatchButtons(); });
+document.getElementById('settingsSave').addEventListener('click', saveSettings);
+document.getElementById('settingsCancel').addEventListener('click', closeSettingsDrawer);
+document.getElementById('drawerClose').addEventListener('click', closeSettingsDrawer);
+drawerOverlay.addEventListener('click', closeSettingsDrawer);
 
 // ── Logout ──────────────────────────────────
 document.getElementById('logout').addEventListener('click', () => {

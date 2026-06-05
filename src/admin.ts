@@ -160,6 +160,9 @@ function sanitizeEndpoint(endpoint: unknown) {
 		nlsAppKey: typeof value.nlsAppKey === "string" ? value.nlsAppKey : undefined,
 		lyBlueBearerToken: typeof value.lyBlueBearerToken === "string" ? value.lyBlueBearerToken : undefined,
 		lyBlueOaid: typeof value.lyBlueOaid === "string" ? value.lyBlueOaid : undefined,
+		settings: value.settings && typeof value.settings === "object" && !Array.isArray(value.settings)
+			? value.settings as Record<string, unknown>
+			: undefined,
 	};
 }
 
